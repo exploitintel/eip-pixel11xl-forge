@@ -1,0 +1,205 @@
+{
+  "schemaVersion": 1,
+  "repository": "eip-pixel11xl-forge",
+  "builds": [
+    {
+      "buildId": "CD1A.260714.001.A9",
+      "status": "candidate",
+      "device": {
+        "model": "Pixel 11 Pro XL",
+        "codename": "kodiak",
+        "buildFingerprint": "google/kodiak/kodiak:17/CD1A.260714.001.A9/15938155:user/release-keys",
+        "buildNumber": 15938155,
+        "androidVersion": 17,
+        "securityPatch": "2026-08-05"
+      },
+      "network": {
+        "supportedEgress": ["wifi"],
+        "cellularSupported": false
+      },
+      "kernel": {
+        "upstreamCommit": "5c5f2fea42dd4cc5ae1002945d86e305c09d3262",
+        "upstreamTree": "ea11a8a82242341af2f1ea4ed88850996fc5d855",
+        "patchedTree": "8969c628a0c228d164d952b9517fd78f847ddd6d",
+        "abNumber": 15835541,
+        "localVersion": "-android16-6-g5c5f2fea42dd-ab15835541-4k",
+        "release": "6.12.69-android16-6-g5c5f2fea42dd-ab15835541-4k"
+      },
+      "source": {
+        "upstreamArchiveUrl": "https://android.googlesource.com/kernel/common/+archive/5c5f2fea42dd4cc5ae1002945d86e305c09d3262.tar.gz",
+        "projectArchiveUrl": null,
+        "normalizedArchive": {
+          "name": "kernel-common-5c5f2fea42dd4cc5ae1002945d86e305c09d3262.tar.gz",
+          "size": 245850562,
+          "sha256": "4b4c23319b35f880ce253d3e508d0f444be52719cdbead0039269403d13c79f6"
+        },
+        "sourceManifest": {
+          "name": "source-tree.jsonl",
+          "size": 14692267,
+          "sha256": "46f99f96139467e1a25eab2d01e448912b9a0ccbcc1827078b899fd04267479a"
+        },
+        "patchedManifest": {
+          "name": "patched-source-tree.jsonl",
+          "size": 14692267,
+          "sha256": "001a11e12304089b4102fc349718c542e4160832152c549f3912e9e6e5e78f8d"
+        }
+      },
+      "upstreamLicenses": {
+        "path": "kernel/UPSTREAM-LICENSES.sha256",
+        "sha256": "d01686da6435fdce7da1a2b0e519045bb8661ca38e04b411645ba94fa93ca4e5"
+      },
+      "configs": {
+        "stock": {
+          "path": "kernel/configs/CD1A.260714.001.A9.stock.config",
+          "sha256": "9cdc39bff5a108fa824fa3556c87a359ee00fe05bfade78671b4d6d44391ce7e"
+        },
+        "fragment": {
+          "path": "kernel/fragments/docker.config",
+          "sha256": "7538088c6db00e634486caa5322f637425adba12537d81213a0c8375acbba24b"
+        },
+        "mergedSha256": "775991da2ef2b807637b9d8c6b22e159fdcb6960384b84a5f0e1ff9b0e5a3598"
+      },
+      "patches": [
+        {
+          "path": "kernel/patches/0001-sched-sysvipc-kabi-reserve.patch",
+          "sha256": "0d57a0e92eeb0070365daa3fb7e5d8b548a0dc93d170a0209375b1b917f8363f",
+          "license": "GPL-2.0-only"
+        },
+        {
+          "path": "kernel/patches/0002-module-allow-symbol-crc-mismatch.patch",
+          "sha256": "b901c95c5d789be1ab109809d7f7bcc2c61cbbfa14e1e0366090c44a3464050d",
+          "license": "GPL-2.0-or-later"
+        },
+        {
+          "path": "kernel/patches/0003-overlayfs-drop-dcache-op-check.patch",
+          "sha256": "5191bd6f02c9e0d8fdb28eaa666b5f741cec838aeaf48ea7bf4532291ee20de5",
+          "license": "GPL-2.0-only"
+        }
+      ],
+      "reproducibilityKey": {
+        "purpose": "public-non-secret-build-fixture",
+        "mtimeEpoch": 1788609530,
+        "pem": {
+          "path": "kernel/keys/reproducibility/signing_key.pem",
+          "size": 5163,
+          "sha256": "8c184c93005ffcbb1bccfd45f01f6049b1d693768735da20c7d744f164fe9524"
+        },
+        "certificate": {
+          "path": "kernel/keys/reproducibility/signing_key.x509",
+          "size": 1356,
+          "sha256": "3bb8d04e58686289a831cc78438db6f67103149a98e93cb22593b0513524cf64",
+          "sha256Fingerprint": "3B:B8:D0:4E:58:68:62:89:A8:31:CC:78:43:8D:B6:F6:71:03:14:9A:98:E9:3C:B2:25:93:B0:51:35:24:CF:64",
+          "serial": "45504950583131464F52474501",
+          "notBefore": "2026-09-06T00:00:00Z",
+          "notAfter": "2126-09-06T00:00:00Z"
+        },
+        "supportFiles": [
+          {
+            "path": "kernel/keys/reproducibility/x509.genkey",
+            "sha256": "40bade51ee0b57b041a7d657ebdc27c10953a2a92388a4e49002d25a3191d06c"
+          },
+          {
+            "path": "kernel/keys/reproducibility/.signing_key.pem.cmd",
+            "sha256": "eefc4666e0cf670d3540c989aa6ff4d0bee09a3559f63f700e043c355bed7243"
+          },
+          {
+            "path": "kernel/keys/reproducibility/.signing_key.x509.cmd",
+            "sha256": "00755eba31a59a1e07dbc0c1a24704dcb364476eafb5d638b156b8814aeec973"
+          }
+        ]
+      },
+      "builder": {
+        "platform": "linux/arm64",
+        "baseImageIndexDigest": "sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1",
+        "basePlatformManifestDigest": "sha256:0aa0908407cce3da2a90c1d80acc6ca5ca57401ed63eecfa8149b7ba3cc40829",
+        "debianSnapshot": "20260906T000000Z",
+        "dockerfile": {
+          "path": "kernel/Dockerfile.buildenv",
+          "sha256": "866d3ad0716cc55252bc92681db59d7b0011e69ddd5507b403d4ee4e89f10568"
+        },
+        "requestedPackages": {
+          "path": "kernel/buildenv-packages.txt",
+          "sha256": "270903cb2d69a61421f014dedbf7b457486d6d01fd25e07a1019158bcc6f9366"
+        },
+        "buildScripts": [
+          {
+            "path": "kernel/build-builder.sh",
+            "sha256": "db6c40a87eb72922d5a5d3032a68a4a544c4a1ea550f8c3814a8d6f4ef2d14ef"
+          },
+          {
+            "path": "kernel/build.sh",
+            "sha256": "31acf43d528790047351a4e4b7796a52a437a6792b4a6c423b4afb3dce978e16"
+          },
+          {
+            "path": "kernel/build-in-container.sh",
+            "sha256": "99460d395a8ed97fba75557f3355f2c5bd554984f2199dda9f78b3f456923c21"
+          },
+          {
+            "path": "kernel/normalize-source.sh",
+            "sha256": "9647e6c0696afa92c1232c34d784461d2450219b287dfbf59db13e22fa3365d3"
+          },
+          {
+            "path": "kernel/normalize-source-in-container.sh",
+            "sha256": "f3f756a04c3573231ece01e4985f9a36d58fed251b5ee329e65c4764a24721fa"
+          },
+          {
+            "path": "tools/check-source-archive.py",
+            "sha256": "f72ac9ed36787fb63bcf72092a6ef21178c4bc62b86f75e47d481e9dddf9bb0d"
+          },
+          {
+            "path": "tools/oci-image-info.py",
+            "sha256": "fcdcda4971a628308a345862c658a374fed9089c5b9b98ef4eb730249afafe35"
+          },
+          {
+            "path": "tools/source-tree-manifest.py",
+            "sha256": "c2c5281c155b858ee595ca8cdf5aba13fdb5c18c922140b3b835fc683b88ff62"
+          }
+        ],
+        "ociManifestDigest": "sha256:b4046aa75595c3811ef95a7dfc2e9849f5088c8551895e5632786cae35ebe0ab",
+        "configDigest": "sha256:b241a0560b661226481a88f52553a0fd3d1d4b5e966d8549a5de08b2704f3d85",
+        "sourceDateEpoch": 1788609530,
+        "compileNetwork": "none"
+      },
+      "kbuild": {
+        "host": "2a218f3059b2",
+        "user": "root",
+        "version": 2,
+        "bannerTimestamp": "Sat Sep  5 12:07:10 UTC 2026",
+        "initramfsEpoch": 1788609530
+      },
+      "boot": {
+        "partitionSize": 67108864,
+        "pageSize": 4096,
+        "headerVersion": 4,
+        "headerSize": 1584,
+        "ramdiskSize": 0,
+        "acceptedInputs": [
+          {
+            "role": "stock",
+            "payload": {
+              "size": 20230712,
+              "sha256": "b456e2b874e4cc2a2fd208d4c7e4bd2fd52dc29c6727fb81052d16bc8da86ae3"
+            },
+            "partition": {
+              "size": 67108864,
+              "sha256": "5fc827ab5adfaf81f84cd7b1ab8675684e5588aaff832e9ba45051a72d0b06a2"
+            }
+          }
+        ],
+        "candidateOutputPartitionSha256": "10307cb975348f913bf4bdb024436d0f4b3c93c9cc1b8188ebf18960733cfcf6"
+      },
+      "kernelSuNext": {
+        "installationMode": "LKM",
+        "testedVersions": ["3.3.0"],
+        "minimumVersion": "3.3.0",
+        "maximumVersion": "3.3.0"
+      },
+      "candidateImage": {
+        "name": "Image-CD1A.260714.001.A9.lz4",
+        "size": 19728440,
+        "sha256": "647d9a007f3042342d73cb5cf951a2d1f987257e817583bf426036f46924c855"
+      },
+      "immutableReleaseUrl": null
+    }
+  ]
+}

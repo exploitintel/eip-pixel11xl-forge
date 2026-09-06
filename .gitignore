@@ -1,0 +1,29 @@
+.DS_Store
+*.log
+*.tmp
+*.swp
+
+# Build and candidate outputs never enter source history.
+out/
+dist/
+.cache/
+.work/
+kernel/source/
+kernel/*.tar.gz
+kernel/Image
+kernel/Image.lz4
+kernel/*.img
+
+# Device images, firmware, Android state, and credentials are always private.
+*.img
+*.jks
+*.keystore
+*.pem
+*.key
+*.p12
+*.env
+.env*
+
+# D4 is deliberately public, reproducibility-only test material. No other
+# private-key path is permitted in this repository.
+!kernel/keys/reproducibility/signing_key.pem

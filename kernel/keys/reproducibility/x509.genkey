@@ -1,0 +1,15 @@
+[ req ]
+default_bits = 4096
+distinguished_name = req_distinguished_name
+prompt = no
+string_mask = utf8only
+x509_extensions = myexts
+
+[ req_distinguished_name ]
+CN = eip-pixel11xl-forge public reproducibility fixture v1
+
+[ myexts ]
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid

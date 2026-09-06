@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/OWNER/eip-pixel11xl-forge/schemas/release-metadata-v1.schema.json",
+  "title": "eip-pixel11xl-forge release metadata v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "repository",
+    "tag",
+    "source_ref",
+    "commit",
+    "signer_workflow",
+    "channel",
+    "module",
+    "builds"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/eip-pixel11xl-forge$"
+    },
+    "tag": {
+      "type": "string",
+      "pattern": "^v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"
+    },
+    "source_ref": {
+      "type": "string",
+      "pattern": "^refs/tags/v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"
+    },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "signer_workflow": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/eip-pixel11xl-forge/\\.github/workflows/kernel\\.yml$"
+    },
+    "channel": { "enum": ["prerelease", "stable"] },
+    "module": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "version_code"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"
+        },
+        "version_code": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "builds": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["build_id", "device", "build_fingerprint"],
+        "properties": {
+          "build_id": {
+            "type": "string",
+            "pattern": "^[A-Z0-9]+(?:\\.[A-Z0-9]+)+$"
+          },
+          "device": { "type": "string", "minLength": 1 },
+          "build_fingerprint": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

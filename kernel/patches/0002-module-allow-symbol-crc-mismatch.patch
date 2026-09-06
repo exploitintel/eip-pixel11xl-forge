@@ -1,0 +1,24 @@
+Subject: module-allow-symbol-crc-mismatch
+
+Let a module load when a symbol CRC disagrees with the kernel, and say
+'(allowed)' in the warning so the bypass is visible in dmesg. The vendor
+modules are built against the stock kernel; which of their symbol CRCs
+differ from this build's has not been inventoried, so the check is
+relaxed rather than shown unnecessary. This is an accepted risk.
+
+Upstream: android.googlesource.com/kernel/common commit 5c5f2fea42dd4cc5ae1002945d86e305c09d3262
+License: GPL-2.0-or-later, matching kernel/module/version.c
+
+--- a/kernel/module/version.c
++++ b/kernel/module/version.c
+@@ -68,8 +68,8 @@
+ 	return 1;
+ 
+ bad_version:
+-	pr_warn("%s: disagrees about version of symbol %s\n", info->name, symname);
+-	return 0;
++	pr_warn("%s: disagrees about version of symbol %s (allowed)\n", info->name, symname);
++	return 1;
+ }
+ 
+ int check_modstruct_version(const struct load_info *info,

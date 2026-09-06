@@ -1,0 +1,38 @@
+# linux/arm64/v8 child manifest of debian:trixie, selected 2026-09-06.
+FROM debian@sha256:0aa0908407cce3da2a90c1d80acc6ca5ca57401ed63eecfa8149b7ba3cc40829
+
+ARG DEBIAN_SNAPSHOT=20260906T000000Z
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    TZ=UTC \
+    PATH=/usr/lib/llvm-19/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+COPY buildenv-packages.txt /tmp/buildenv-packages.txt
+
+# The timestamped service is the immutable transport endpoint. APT still
+# authenticates every repository through its signed InRelease metadata.
+RUN set -eu; \
+    test "$(dpkg --print-architecture)" = arm64; \
+    rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; \
+    printf '%s\n' \
+      "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT} trixie main" \
+      "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT} trixie-updates main" \
+      "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT} trixie-security main" \
+      > /etc/apt/sources.list; \
+    printf '%s\n' \
+      'Acquire::Check-Valid-Until "false";' \
+      'Acquire::Languages "none";' \
+      'APT::Install-Recommends "false";' \
+      'APT::Install-Suggests "false";' \
+      > /etc/apt/apt.conf.d/99eip-reproducible; \
+    apt-get update; \
+    xargs apt-get install -y --no-install-recommends < /tmp/buildenv-packages.txt; \
+    mkdir -p /usr/local/share/eip-pixel11xl-forge; \
+    install -m 0644 /tmp/buildenv-packages.txt /usr/local/share/eip-pixel11xl-forge/requested-packages.txt; \
+    dpkg-query -W > /usr/local/share/eip-pixel11xl-forge/dpkg-packages.txt; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb \
+      /var/cache/ldconfig/aux-cache /var/log/alternatives.log \
+      /var/log/apt/* /var/log/dpkg.log /tmp/buildenv-packages.txt
+
+WORKDIR /ksrc

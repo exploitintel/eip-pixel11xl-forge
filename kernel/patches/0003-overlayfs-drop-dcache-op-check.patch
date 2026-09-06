@@ -1,0 +1,24 @@
+Subject: overlayfs-drop-dcache-op-check
+
+Stop ovl_dentry_weird() from treating DCACHE_OP_HASH and
+DCACHE_OP_COMPARE as weird. Casefolded directories, which Android's f2fs
+/data uses, set both flags, and overlayfs then refuses the layer. The
+kernel the phone runs carries this change; the exact mount that needed
+it on this device is not re-derived here.
+
+Upstream: android.googlesource.com/kernel/common commit 5c5f2fea42dd4cc5ae1002945d86e305c09d3262
+License: GPL-2.0-only, matching fs/overlayfs/util.c
+
+--- a/fs/overlayfs/util.c
++++ b/fs/overlayfs/util.c
+@@ -201,9 +201,7 @@
+ 		return true;
+ 
+ 	return dentry->d_flags & (DCACHE_NEED_AUTOMOUNT |
+-				  DCACHE_MANAGE_TRANSIT |
+-				  DCACHE_OP_HASH |
+-				  DCACHE_OP_COMPARE);
++				  DCACHE_MANAGE_TRANSIT);
+ }
+ 
+ enum ovl_path_type ovl_path_type(struct dentry *dentry)

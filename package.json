@@ -1,0 +1,13 @@
+{
+  "name": "eip-pixel11xl-forge",
+  "version": "0.0.0-private",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "check": "npm test && bash tools/check-public-tree.sh"
+  }
+}

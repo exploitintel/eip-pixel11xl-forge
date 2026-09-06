@@ -1,0 +1,121 @@
+name: Kernel candidate
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  discover:
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Check out the exact source commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate source ref and discover builds
+        id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools/check-candidate-ref.py "$GITHUB_REF"
+          tools/validate-builds.py
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          document = json.load(open("kernel/builds.json", encoding="utf-8"))
+          print("matrix=" + json.dumps({"build_id": [item["buildId"] for item in document["builds"]]}, separators=(",", ":")))
+          PY
+
+  build:
+    needs: discover
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+      - name: Check out the exact source commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Select Node 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - name: Validate public source contracts
+        run: npm run check
+      - name: Download the immutable project source archive
+        shell: bash
+        env:
+          BUILD_ID: ${{ matrix.build_id }}
+        run: |
+          set -euo pipefail
+          readarray -t source < <(python3 - "$BUILD_ID" <<'PY'
+          import json, sys
+          document = json.load(open("kernel/builds.json", encoding="utf-8"))
+          record = next(item for item in document["builds"] if item["buildId"] == sys.argv[1])
+          print(record["source"]["projectArchiveUrl"] or "")
+          print(record["source"]["normalizedArchive"]["name"])
+          PY
+          )
+          [ -n "${source[0]}" ] || { echo "projectArchiveUrl is not configured; Phase C is not remotely runnable" >&2; exit 1; }
+          curl --fail --location --proto '=https' --tlsv1.2 --output "${source[1]}.part" "${source[0]}"
+          mv "${source[1]}.part" "${source[1]}"
+      - name: Build from clean pinned inputs
+        shell: bash
+        env:
+          BUILD_ID: ${{ matrix.build_id }}
+        run: |
+          set -euo pipefail
+          source_name=$(python3 -c 'import json,sys; d=json.load(open("kernel/builds.json")); print(next(x for x in d["builds"] if x["buildId"] == sys.argv[1])["source"]["normalizedArchive"]["name"])' "$BUILD_ID")
+          kernel/build.sh --build-id "$BUILD_ID" --source-archive "$source_name" --out candidate
+          tools/check-candidate.py candidate --build-id "$BUILD_ID"
+      - name: Upload qualified candidate assets
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: kernel-${{ matrix.build_id }}-${{ github.sha }}
+          path: candidate/*
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 14
+
+  attest:
+    needs: [discover, build]
+    runs-on: ubuntu-24.04-arm
+    environment: candidate-attestation
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+      - name: Download the already-scanned candidate
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: kernel-${{ matrix.build_id }}-${{ github.sha }}
+          path: candidate
+      - name: Attest the explicit candidate payload set
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: candidate/*
+      - name: Preserve the Sigstore bundle with the candidate run
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: kernel-${{ matrix.build_id }}-${{ github.sha }}-attestation
+          path: ${{ steps.attest.outputs.bundle-path }}
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 14

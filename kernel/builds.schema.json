@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/OWNER/eip-pixel11xl-forge/kernel/builds.schema.json",
+  "title": "eip-pixel11xl-forge supported build records",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "repository", "builds"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "repository": { "const": "eip-pixel11xl-forge" },
+    "builds": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/build" }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "nullableDigest": {
+      "type": ["string", "null"],
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "gitObject": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"
+    },
+    "safeName": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*$"
+    },
+    "safePath": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._+/-]+$"
+    },
+    "httpsUrl": {
+      "type": "string",
+      "pattern": "^https://[^/?#\\s]+/[^?#\\s]*$"
+    },
+    "nullableHttpsUrl": {
+      "type": ["string", "null"],
+      "pattern": "^https://[^/?#\\s]+/[^?#\\s]*$"
+    },
+    "trackedFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/safePath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "sizedTrackedFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "size", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/safePath" },
+        "size": { "type": "integer", "minimum": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "sourceArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "size", "sha256"],
+      "properties": {
+        "name": { "$ref": "#/$defs/safeName" },
+        "size": { "type": "integer", "minimum": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "fileIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["size", "sha256"],
+      "properties": {
+        "size": { "type": "integer", "minimum": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "buildId", "status", "device", "network", "kernel", "source",
+        "upstreamLicenses", "configs", "patches", "reproducibilityKey",
+        "builder", "kbuild", "boot", "kernelSuNext", "candidateImage",
+        "immutableReleaseUrl"
+      ],
+      "properties": {
+        "buildId": {
+          "type": "string",
+          "pattern": "^[A-Z0-9]+(?:\\.[A-Z0-9]+)+$"
+        },
+        "status": {
+          "enum": ["candidate-bootstrap", "candidate", "released", "revoked"]
+        },
+        "device": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "model", "codename", "buildFingerprint", "buildNumber",
+            "androidVersion", "securityPatch"
+          ],
+          "properties": {
+            "model": { "type": "string", "minLength": 1 },
+            "codename": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
+            "buildFingerprint": { "type": "string", "minLength": 1 },
+            "buildNumber": { "type": "integer", "minimum": 1 },
+            "androidVersion": { "type": "integer", "minimum": 1 },
+            "securityPatch": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" }
+          }
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["supportedEgress", "cellularSupported"],
+          "properties": {
+            "supportedEgress": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "enum": ["wifi"] }
+            },
+            "cellularSupported": { "const": false }
+          }
+        },
+        "kernel": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "upstreamCommit", "upstreamTree", "patchedTree", "abNumber",
+            "localVersion", "release"
+          ],
+          "properties": {
+            "upstreamCommit": { "$ref": "#/$defs/gitObject" },
+            "upstreamTree": { "$ref": "#/$defs/gitObject" },
+            "patchedTree": { "$ref": "#/$defs/gitObject" },
+            "abNumber": { "type": "integer", "minimum": 1 },
+            "localVersion": { "type": "string", "pattern": "^-[A-Za-z0-9._+-]+$" },
+            "release": { "type": "string", "pattern": "^[A-Za-z0-9._+-]+$" }
+          }
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "upstreamArchiveUrl", "projectArchiveUrl", "normalizedArchive",
+            "sourceManifest", "patchedManifest"
+          ],
+          "properties": {
+            "upstreamArchiveUrl": { "$ref": "#/$defs/httpsUrl" },
+            "projectArchiveUrl": { "$ref": "#/$defs/nullableHttpsUrl" },
+            "normalizedArchive": { "$ref": "#/$defs/sourceArtifact" },
+            "sourceManifest": { "$ref": "#/$defs/sourceArtifact" },
+            "patchedManifest": { "$ref": "#/$defs/sourceArtifact" }
+          }
+        },
+        "upstreamLicenses": { "$ref": "#/$defs/trackedFile" },
+        "configs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["stock", "fragment", "mergedSha256"],
+          "properties": {
+            "stock": { "$ref": "#/$defs/trackedFile" },
+            "fragment": { "$ref": "#/$defs/trackedFile" },
+            "mergedSha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "patches": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256", "license"],
+            "properties": {
+              "path": { "$ref": "#/$defs/safePath" },
+              "sha256": { "$ref": "#/$defs/sha256" },
+              "license": { "enum": ["GPL-2.0-only", "GPL-2.0-or-later"] }
+            }
+          }
+        },
+        "reproducibilityKey": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["purpose", "mtimeEpoch", "pem", "certificate", "supportFiles"],
+          "properties": {
+            "purpose": { "const": "public-non-secret-build-fixture" },
+            "mtimeEpoch": { "type": "integer", "minimum": 1 },
+            "pem": { "$ref": "#/$defs/sizedTrackedFile" },
+            "certificate": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path", "size", "sha256", "sha256Fingerprint", "serial",
+                "notBefore", "notAfter"
+              ],
+              "properties": {
+                "path": { "$ref": "#/$defs/safePath" },
+                "size": { "type": "integer", "minimum": 1 },
+                "sha256": { "$ref": "#/$defs/sha256" },
+                "sha256Fingerprint": {
+                  "type": "string",
+                  "pattern": "^[0-9A-F]{2}(?::[0-9A-F]{2}){31}$"
+                },
+                "serial": { "type": "string", "pattern": "^[0-9A-F]+$" },
+                "notBefore": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+                "notAfter": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" }
+              }
+            },
+            "supportFiles": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/trackedFile" }
+            }
+          }
+        },
+        "builder": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "platform", "baseImageIndexDigest", "basePlatformManifestDigest",
+            "debianSnapshot", "dockerfile", "requestedPackages", "buildScripts",
+            "ociManifestDigest", "configDigest", "sourceDateEpoch", "compileNetwork"
+          ],
+          "properties": {
+            "platform": { "const": "linux/arm64" },
+            "baseImageIndexDigest": { "$ref": "#/$defs/digest" },
+            "basePlatformManifestDigest": { "$ref": "#/$defs/digest" },
+            "debianSnapshot": { "type": "string", "pattern": "^[0-9]{8}T[0-9]{6}Z$" },
+            "dockerfile": { "$ref": "#/$defs/trackedFile" },
+            "requestedPackages": { "$ref": "#/$defs/trackedFile" },
+            "buildScripts": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/trackedFile" }
+            },
+            "ociManifestDigest": { "$ref": "#/$defs/nullableDigest" },
+            "configDigest": { "$ref": "#/$defs/nullableDigest" },
+            "sourceDateEpoch": { "type": "integer", "minimum": 1 },
+            "compileNetwork": { "const": "none" }
+          }
+        },
+        "kbuild": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["host", "user", "version", "bannerTimestamp", "initramfsEpoch"],
+          "properties": {
+            "host": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]*$" },
+            "user": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+$" },
+            "version": { "type": "integer", "minimum": 1 },
+            "bannerTimestamp": { "type": "string", "minLength": 1 },
+            "initramfsEpoch": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "boot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "partitionSize", "pageSize", "headerVersion", "headerSize",
+            "ramdiskSize", "acceptedInputs", "candidateOutputPartitionSha256"
+          ],
+          "properties": {
+            "partitionSize": { "type": "integer", "minimum": 1 },
+            "pageSize": { "type": "integer", "minimum": 1 },
+            "headerVersion": { "type": "integer", "minimum": 0 },
+            "headerSize": { "type": "integer", "minimum": 1 },
+            "ramdiskSize": { "type": "integer", "minimum": 0 },
+            "acceptedInputs": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["role", "payload", "partition"],
+                "properties": {
+                  "role": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+                  "payload": { "$ref": "#/$defs/fileIdentity" },
+                  "partition": { "$ref": "#/$defs/fileIdentity" }
+                }
+              }
+            },
+            "candidateOutputPartitionSha256": {
+              "type": ["string", "null"],
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "kernelSuNext": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["installationMode", "testedVersions", "minimumVersion", "maximumVersion"],
+          "properties": {
+            "installationMode": { "const": "LKM" },
+            "testedVersions": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/semver" }
+            },
+            "minimumVersion": { "$ref": "#/$defs/semver" },
+            "maximumVersion": { "$ref": "#/$defs/semver" }
+          }
+        },
+        "candidateImage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "size", "sha256"],
+          "properties": {
+            "name": { "$ref": "#/$defs/safeName" },
+            "size": { "type": ["integer", "null"], "minimum": 1 },
+            "sha256": {
+              "type": ["string", "null"],
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "immutableReleaseUrl": { "$ref": "#/$defs/nullableHttpsUrl" }
+      }
+    }
+  }
+}

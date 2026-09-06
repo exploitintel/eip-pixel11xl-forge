@@ -1,0 +1,204 @@
+name: KernelSU-Next installer package
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  build-installer-package:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the exact source commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Select Node 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - name: Validate the complete public source contract
+        run: npm run check
+
+      - name: Download the hash-bound AArch64 musl toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir --mode=0755 .work
+          readarray -t pin < <(python3 - <<'PY'
+          import json
+          item = json.load(open("tools/aarch64-musl-toolchain.json", encoding="utf-8"))["archive"]
+          print(item["url"])
+          print(item["name"])
+          print(item["size"])
+          print(item["sha256"])
+          PY
+          )
+          [ "${#pin[@]}" -eq 4 ]
+          curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --output ".work/${pin[1]}.part" "${pin[0]}"
+          [ "$(wc -c < ".work/${pin[1]}.part" | tr -d ' ')" = "${pin[2]}" ]
+          printf '%s  %s\n' "${pin[3]}" ".work/${pin[1]}.part" | sha256sum --check --strict
+          mv ".work/${pin[1]}.part" ".work/${pin[1]}"
+
+      - name: Build the static tools twice and prove byte identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive=$(python3 -c 'import json; print(json.load(open("tools/aarch64-musl-toolchain.json"))["archive"]["name"])')
+          tools/build-module-tools.sh --toolchain-archive ".work/$archive" --out .work/module-tools-a
+          tools/build-module-tools.sh --toolchain-archive ".work/$archive" --out .work/module-tools-b
+          for name in patch-engine swap-boot-kernel privns route-policy; do
+            cmp ".work/module-tools-a/$name" ".work/module-tools-b/$name"
+          done
+
+      - name: Verify the tracked exact musl notice
+        shell: bash
+        run: |
+          set -euo pipefail
+          readarray -t pin < <(python3 - <<'PY'
+          import json
+          item = json.load(open("tools/aarch64-musl-toolchain.json", encoding="utf-8"))["licenses"]["musl"]
+          print(item["url"])
+          print(item["size"])
+          print(item["sha256"])
+          PY
+          )
+          [ "${#pin[@]}" -eq 3 ]
+          [ "${pin[0]}" = https://toolchains.bootlin.com/* ]
+          [ "$(wc -c < tools/licenses/musl-COPYRIGHT | tr -d ' ')" = "${pin[1]}" ]
+          printf '%s  %s\n' "${pin[2]}" tools/licenses/musl-COPYRIGHT | sha256sum --check --strict
+
+      - name: Download and verify Docker's pinned static archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          readarray -t pin < <(python3 - <<'PY'
+          import json
+          import os
+          item = json.load(open("tools/engine.json", encoding="utf-8"))["engine"]["tarball"]
+          print(item["url"])
+          print(os.path.basename(item["url"]))
+          print(item["size"])
+          print(item["sha256"])
+          PY
+          )
+          [ "${#pin[@]}" -eq 4 ]
+          curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --output ".work/${pin[1]}.part" "${pin[0]}"
+          [ "$(wc -c < ".work/${pin[1]}.part" | tr -d ' ')" = "${pin[2]}" ]
+          printf '%s  %s\n' "${pin[3]}" ".work/${pin[1]}.part" | sha256sum --check --strict
+          mv ".work/${pin[1]}.part" ".work/${pin[1]}"
+
+      - name: Prove the C patcher against the Python reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball=$(python3 -c 'import json,os; u=json.load(open("tools/engine.json"))["engine"]["tarball"]["url"]; print(os.path.basename(u))')
+          tools/patch-engine.py --engine tools/engine.json \
+            --tarball ".work/$tarball" --out .work/engine-python
+          cc -std=c99 -O2 -Wall -Wextra -Werror \
+            -o .work/patch-engine-host tools/patch-engine.c
+          python3 - ".work/$tarball" .work/patch-engine-host <<'PY'
+          import filecmp
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import sys
+          import tarfile
+
+          tarball, patcher = sys.argv[1:]
+          pin = json.load(open("tools/engine.json", encoding="utf-8"))
+          original_dir = pathlib.Path(".work/engine-original")
+          c_dir = pathlib.Path(".work/engine-c")
+          original_dir.mkdir(mode=0o755)
+          c_dir.mkdir(mode=0o755)
+          with tarfile.open(tarball, mode="r:gz") as archive:
+              for name, expected in pin["binaries"].items():
+                  if not name or name in (".", "..") or "/" in name:
+                      raise SystemExit("unsafe engine member name")
+                  member = archive.getmember("docker/" + name)
+                  if not member.isfile():
+                      raise SystemExit("engine member is not a regular file: " + name)
+                  data = archive.extractfile(member).read()
+                  if len(data) != expected["size"]:
+                      raise SystemExit("engine member size mismatch: " + name)
+                  if hashlib.sha256(data).hexdigest() != expected["inputSha256"]:
+                      raise SystemExit("engine member identity mismatch: " + name)
+                  (original_dir / name).write_bytes(data)
+
+          for name, expected in pin["binaries"].items():
+              source = original_dir / name
+              output = c_dir / name
+              command = [
+                  patcher,
+                  os.fspath(source),
+                  os.fspath(output),
+                  "--expect-input-size",
+                  str(expected["size"]),
+                  "--expect-input-sha256",
+                  expected["inputSha256"],
+                  "--expect-output-sha256",
+                  expected["sha256"],
+              ]
+              if expected["replacements"]:
+                  for rule in pin["rules"]:
+                      command.extend([
+                          "--replace",
+                          rule["from"],
+                          rule["to"],
+                          str(expected["replacements"].get(rule["from"], 0)),
+                      ])
+              subprocess.run(command, check=True)
+              if not filecmp.cmp(output, pathlib.Path(".work/engine-python") / name, shallow=False):
+                  raise SystemExit("C and Python outputs differ: " + name)
+          print("C and Python patchers agree for every pinned engine binary")
+          PY
+
+      - name: Assemble the deterministic installable qualification package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir --mode=0755 dist
+          python3 tools/assemble-module.py \
+            --installable \
+            --patch-engine .work/module-tools-a/patch-engine \
+            --swap-boot-kernel .work/module-tools-a/swap-boot-kernel \
+            --privns .work/module-tools-a/privns \
+            --route-policy .work/module-tools-a/route-policy \
+            --toolchain-provenance tools/aarch64-musl-toolchain.json \
+            --musl-license tools/licenses/musl-COPYRIGHT \
+            --output .work/module-a.zip
+          python3 tools/assemble-module.py \
+            --installable \
+            --patch-engine .work/module-tools-b/patch-engine \
+            --swap-boot-kernel .work/module-tools-b/swap-boot-kernel \
+            --privns .work/module-tools-b/privns \
+            --route-policy .work/module-tools-b/route-policy \
+            --toolchain-provenance tools/aarch64-musl-toolchain.json \
+            --musl-license tools/licenses/musl-COPYRIGHT \
+            --output .work/module-b.zip
+          cmp .work/module-a.zip .work/module-b.zip
+          module_version=$(awk -F= '$1 == "version" { print $2 }' module/module.prop)
+          [ -n "$module_version" ]
+          module_zip="eip-pixel11xl-forge-${module_version}.zip"
+          mv .work/module-a.zip "dist/$module_zip"
+          cp tools/aarch64-musl-toolchain.json dist/toolchain-provenance.json
+          cp docs/INSTALL.md dist/INSTALL.md
+          (cd dist && sha256sum INSTALL.md "$module_zip" toolchain-provenance.json > SHA256SUMS)
+
+      - name: Upload the commit-qualified installable artifact
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: module-installable-${{ github.sha }}
+          path: dist/*
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 14

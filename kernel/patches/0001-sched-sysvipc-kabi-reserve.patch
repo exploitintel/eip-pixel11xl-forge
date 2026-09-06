@@ -1,0 +1,38 @@
+Subject: sched-sysvipc-kabi-reserve
+
+Enabling CONFIG_SYSVIPC adds sysvsem and sysvshm to task_struct, which
+shifts every field after them and breaks the vendor modules' view of the
+struct. Place both in the ANDROID_KABI_RESERVE(6..8) padding instead so
+the layout the modules were built against is unchanged.
+
+Upstream: android.googlesource.com/kernel/common commit 5c5f2fea42dd4cc5ae1002945d86e305c09d3262
+License: GPL-2.0-only, matching include/linux/sched.h
+
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -1173,8 +1173,7 @@
+ 	struct nameidata		*nameidata;
+ 
+ #ifdef CONFIG_SYSVIPC
+-	struct sysv_sem			sysvsem;
+-	struct sysv_shm			sysvshm;
++	/* sysvsem/sysvshm live in ANDROID_KABI_RESERVE(6..8) below to keep the KMI layout */
+ #endif
+ #ifdef CONFIG_DETECT_HUNG_TASK
+ 	unsigned long			last_switch_count;
+@@ -1640,9 +1639,15 @@
+ 	ANDROID_KABI_RESERVE(3);
+ 	ANDROID_KABI_RESERVE(4);
+ 	ANDROID_KABI_RESERVE(5);
++#ifdef CONFIG_SYSVIPC
++	ANDROID_KABI_USE(6, struct sysv_sem sysvsem);
++	_ANDROID_KABI_REPLACE(ANDROID_KABI_RESERVE(7); ANDROID_KABI_RESERVE(8),
++			      struct sysv_shm sysvshm);
++#else
+ 	ANDROID_KABI_RESERVE(6);
+ 	ANDROID_KABI_RESERVE(7);
+ 	ANDROID_KABI_RESERVE(8);
++#endif
+ 
+ #ifdef CONFIG_RV
+ 	/*
