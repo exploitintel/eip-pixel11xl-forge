@@ -22,6 +22,8 @@ test("the installable module workflow is pinned, least-privilege, and release-fr
 
 test("the workflow verifies the SDK before two clean byte-identical builds", () => {
   assert.match(workflow, /tools\/aarch64-musl-toolchain\.json/);
+  assert.match(workflow, /\[\[ "\$\{pin\[0\]\}" == https:\/\/toolchains\.bootlin\.com\/\* \]\]/);
+  assert.doesNotMatch(workflow, /\[ "\$\{pin\[0\]\}" = https:\/\/toolchains\.bootlin\.com\/\* \]/);
   assert.match(workflow, /curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1\.2/);
   assert.match(workflow, /wc -c/);
   assert.match(workflow, /sha256sum --check --strict/);

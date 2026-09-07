@@ -70,7 +70,7 @@ jobs:
           PY
           )
           [ "${#pin[@]}" -eq 3 ]
-          [ "${pin[0]}" = https://toolchains.bootlin.com/* ]
+          [[ "${pin[0]}" == https://toolchains.bootlin.com/* ]]
           [ "$(wc -c < tools/licenses/musl-COPYRIGHT | tr -d ' ')" = "${pin[1]}" ]
           printf '%s  %s\n' "${pin[2]}" tools/licenses/musl-COPYRIGHT | sha256sum --check --strict
 
