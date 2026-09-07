@@ -102,7 +102,6 @@ function expectedDaemonArgs(
     "--exec-root", `${dockerRoot}/exec`,
     "--pidfile", `${dockerRoot}/run/docker.pid`,
     "--host", `unix://${dockerRoot}/run/docker.sock`,
-    "--host", "tcp://127.0.0.1:2375",
     "--storage-driver", "overlay2",
     "--bip", bridgeBip,
     "--default-address-pool", `base=${bridgePool},size=${bridgeSubnetPrefix}`,
@@ -118,6 +117,7 @@ test("the public launcher exposes only the prepared-host runtime contract", () =
   assert.match(dockerdSource, /^HOSTCTL_RUNTIME_ONLY_CONTRACT=1$/m);
   assert.doesNotMatch(dockerdSource, /EIP|Forge|companion/i);
   assert.doesNotMatch(dockerdSource, /truncate|mke2fs|losetup|mount -t|iptables -I|ip rule/);
+  assert.doesNotMatch(dockerdSource, /tcp:\/\/|2375/);
   assert.match(dockerdSource, /usage: \$0 --runtime-only/);
 });
 

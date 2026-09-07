@@ -110,7 +110,6 @@ exec $D/bin/privns $D/lib/.etc/upper $D/lib/.etc/work $D/bin/dockerd \
   --exec-root $D/exec \
   --pidfile $D/run/docker.pid \
   --host unix://$D/run/docker.sock \
-  --host tcp://127.0.0.1:2375 \
   --storage-driver overlay2 \
   --bip "$BRIDGE_BIP" \
   --default-address-pool "base=$BRIDGE_POOL_CIDR,size=$BRIDGE_SUBNET_PREFIX" \

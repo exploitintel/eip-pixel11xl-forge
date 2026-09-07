@@ -170,13 +170,12 @@ namespace, SysV IPC, and POSIX message queue capabilities recorded in
 - enables IPv4 forwarding;
 - installs or verifies preference 9990 return-path routing to the main table
   and preference 9991 source routing from the bridge pool to table `wlan0`;
-- verifies loopback TCP port 2375 policy, allowing only root and Android shell
-  before an explicit reject; and
+- retains the loopback TCP port 2375 rejection policy for status-schema
+  compatibility, although the daemon no longer exposes a TCP API; and
 - starts the exact managed daemon only when it is not already running.
 
-The launcher binds the Docker API to the Unix socket and loopback
-`127.0.0.1:2375`, not a WAN interface. Docker owns its normal bridge and
-container firewall rules.
+The launcher binds the Docker API only to `/data/docker/run/docker.sock`.
+Docker owns its normal bridge and container firewall rules.
 
 The target's Android root context cannot issue these two route-netlink writes
 directly. For a missing exact rule, `hostctl` starts the authenticated daemon,
