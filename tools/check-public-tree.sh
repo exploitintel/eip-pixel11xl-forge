@@ -35,11 +35,11 @@ while IFS= read -r -d '' file; do
   printf '%s\0' "$file"
 done < <(git ls-files -z --others --ignored --exclude-standard) >> "$scan_paths"
 
-for forbidden in .private stock artifacts eip android-app baseline PLAN.md PACKAGING-PLAN.md PROVENANCE.md; do
+for forbidden in .private stock artifacts baseline PLAN.md PACKAGING-PLAN.md PROVENANCE.md; do
   [ ! -e "$forbidden" ] || fail "forbidden public path: $forbidden"
 done
 
-allowed_top='^(\.github|android|docs|kernel|module|schemas|tests|tools|\.gitignore|AGENTS\.md|LICENSE|NOTICE\.md|README\.md|package\.json)$'
+allowed_top='^(\.github|android|android-app|deployment|docs|eip|kernel|module|schemas|tests|tools|\.gitignore|AGENTS\.md|FORGE_REVISION|LICENSE|NOTICE\.md|README\.md|package\.json)$'
 while IFS= read -r entry; do
   [[ "$entry" =~ $allowed_top ]] || fail "unexpected top-level path: $entry"
 done < <(find . -mindepth 1 -maxdepth 1 ! -name .git ! -name .cache -exec basename {} \; | LC_ALL=C sort)
@@ -52,6 +52,7 @@ while IFS= read -r -d '' file; do
   [[ "$top" =~ $allowed_top ]] || fail "unexpected candidate top-level path: $top"
   case "$file" in
     *.img|*.jks|*.keystore|*.p12|*.env|*.env.*|*/Image|*/Image.lz4)
+      [ "$file" = eip/container.build.env ] && continue
       fail "generated, firmware, or credential-shaped file: $file" ;;
   esac
   size=$(wc -c < "$file" | tr -d ' ')
@@ -76,7 +77,7 @@ done < "$scan_paths"
   || fail "unexpected private-key material: ${key_file:-none}"
 [ "$(digest "$private_key_path")" = "$private_key_sha" ] || fail "D4 public fixture hash changed"
 
-patterns='EIP_HOSTCTL_RUNTIME_ONLY|/Users/[^/]+/|pixel11-docker/\.private|eip-cve-public|boot_docker4\.img|forge-control-debug|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|(^|[^A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}'
+patterns='/Users/[^/]+/|pixel11-docker/\.private|boot_docker4\.img|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|(^|[^A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}'
 while IFS= read -r -d '' file; do
   [ -f "$file" ] || continue
   case "$file" in

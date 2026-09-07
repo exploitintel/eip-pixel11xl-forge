@@ -1,24 +1,26 @@
 # eip-pixel11xl-forge working rules
 
-This repository is the public Pixel 11 Pro XL host-layer project. It contains
-reproducible kernel inputs, generic Android runtime helpers, and host-side
-verification tools. It never owns Forge application deployment or operator
-state.
+This repository is the public Pixel 11 Pro XL distribution for Forge. It owns
+the Pixel host layer, installer glue, Forge Control app, release packaging,
+and the exact pinned Forge revision. Forge implementation remains in the
+separate `eip-cve-public-v4` repository and is never vendored here.
 
 ## Safety boundary
 
 - Repository work does not authorize flashing, rebooting, service restarts,
   firewall or routing changes, phone deployment, model calls, lab execution,
   remote publication, or GitHub settings changes.
-- Never commit Google firmware, boot or init_boot images, generated kernel
-  binaries, Docker data, credentials, device inventory, private deployment
-  material, or private release keys.
+- Never commit or publish Google firmware, boot or init_boot images, Docker
+  data, credentials, device inventory, or private release keys. Users obtain
+  their own factory ZIP from Google; the release preparation command extracts
+  and verifies its required images locally.
 - The only committed private-key-shaped file is
   `kernel/keys/reproducibility/signing_key.pem`. It is an intentionally public,
   non-secret D4 build fixture whose exact hash is allowlisted. It is not a
   release signing key and must never be trusted for authentication.
-- Resolve defects against this repository's public contracts. Do not copy
-  private application hooks or identifiers into generic host scripts.
+- Resolve Pixel defects against this repository's public contracts. Change
+  Forge behavior in `eip-cve-public-v4`, then deliberately update
+  `FORGE_REVISION` here.
 
 ## Compatibility boundary
 

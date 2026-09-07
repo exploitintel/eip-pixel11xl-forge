@@ -1,0 +1,9 @@
+# Operator shell for driving the v4 compose stack on the phone.
+# The compose client must run on the phone because compose reads env_file paths
+# client-side, and those paths only exist in the phone's filesystem.
+# docker:28-cli brings the docker CLI plus the compose and buildx plugins;
+# bootstrap.sh additionally needs bash, python3, GNU coreutils and util-linux.
+FROM docker:28-cli
+RUN apk add --no-cache bash python3 coreutils util-linux jq git shadow
+WORKDIR /work
+ENTRYPOINT ["/bin/bash"]

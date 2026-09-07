@@ -1,0 +1,110 @@
+# Pixel Forge installer
+
+The release installer brings a supported Pixel 11 Pro XL from stock Android
+to a working Forge system. The accepted clean-install contract is one wipe
+invocation followed by one uninterrupted install invocation.
+
+## Supported target
+
+- Pixel 11 Pro XL (`kodiak`)
+- Google build `CD1A.260714.001.A9`
+- unlocked bootloader
+- Wi-Fi networking
+
+The computer needs `adb`, `fastboot`, `curl`, and `unzip`.
+
+## Prepare the two Google files automatically
+
+Google does not allow its factory images to be redistributed. Download the
+factory ZIP for the exact device and build from
+<https://developers.google.com/android/images>, then run:
+
+```sh
+./prepare-firmware.sh \
+  --factory-zip /path/to/kodiak-cd1a.260714.001.a9-factory-....zip \
+  --serial ADB_SERIAL
+```
+
+The phone must be booted with USB debugging authorized for this preparation
+step. The script does all of the mechanical work:
+
+1. finds the nested `image-kodiak-*.zip`;
+2. extracts `boot.img` and `init_boot.img`;
+3. verifies both exact Google build hashes;
+4. downloads and verifies Docker Engine 29.8.0 and KernelSU-Next 3.3.0 from
+   their official release locations;
+5. uses KernelSU's own tool on the connected phone to create the qualified
+   local bootstrap image; and
+6. places the two required outputs into `payload/`.
+
+The Google files remain on the user's computer and never enter GitHub.
+
+## Clean installation
+
+The first invocation is destructive:
+
+```sh
+./install.sh --serial ADB_SERIAL --wipe
+```
+
+After Android restarts, complete setup, connect Wi-Fi, enable USB debugging,
+and authorize the computer again. Then run:
+
+```sh
+./install.sh \
+  --serial ADB_SERIAL \
+  --provider-env /path/to/providers.env
+```
+
+`--provider-env` is optional. It contains ordinary `KEY=value` rows and is
+never part of the installer bundle. The installer reports key names and value
+lengths, not secret values.
+
+The Docker data image defaults to a sparse 64 GiB allocation. Select 8, 16,
+32, or 64 GiB with `--disk-gib SIZE`.
+
+## Success contract
+
+In one process, the normal invocation installs KernelSU-Next, the Pixel host
+module and kernel, Docker Engine, the pinned Forge images and source, the phone
+operations, and Forge Control. It configures providers, starts Forge, and
+waits for the host authority to report a healthy WebUI and agent-chat service.
+
+The final line must be:
+
+```text
+READY
+```
+
+No local Ollama binary is installed. New state defaults to the Ollama.com API,
+while local Ollama and all other Forge providers remain configurable.
+
+## Failure and recovery
+
+Do not repair a failed clean-install proof with side ADB commands. Correct the
+reported input or USB problem and restart the clean-install sequence.
+
+Before installation, keep the matching Google factory ZIP available off the
+phone. If the phone cannot boot, use fastboot with the exact active slot and
+the matching factory `boot.img` and `init_boot.img`. Never guess a slot or use
+another build.
+
+## Package assembly
+
+`build-simple-package.sh` creates the release directory from explicit built
+artifacts. Public packages omit Google firmware, Docker Engine, and the
+KernelSU Manager APK; `prepare-firmware.sh` obtains or creates those locally.
+Supplying the optional `--engine`, `--ksu-apk`, `--stock-boot`, and
+`--ksu-init-boot` arguments remains available for operator-local packages.
+
+The builder accepts only the Forge commit in `FORGE_REVISION` and verifies
+that the controller image labels and source archive match that commit.
+
+Focused checks:
+
+```sh
+bash -n deployment/prepare-firmware.sh
+bash -n deployment/simple-install.sh
+bash -n deployment/build-simple-package.sh
+node --test tests/simple-installer.test.mjs
+```

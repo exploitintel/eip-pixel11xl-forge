@@ -8,6 +8,8 @@ out/
 dist/
 .cache/
 .work/
+__pycache__/
+*.pyc
 kernel/source/
 kernel/*.tar.gz
 kernel/Image
@@ -23,6 +25,15 @@ kernel/*.img
 *.p12
 *.env
 .env*
+!eip/container.build.env
+
+# Android and complete installer build outputs.
+.gradle/
+android-app/build/
+*.apk
+*.tar
+*.tgz
+*.zip
 
 # D4 is deliberately public, reproducibility-only test material. No other
 # private-key path is permitted in this repository.
