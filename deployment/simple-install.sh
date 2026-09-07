@@ -64,10 +64,32 @@ require_value() {
   [[ -n "${2:-}" && "$2" != --* && "$2" != -h ]] || die "$1 requires a value (see --help)"
 }
 
+hash_file() {
+  local output
+  if command -v shasum >/dev/null 2>&1; then
+    output=$(shasum -a 256 -- "$1") || die "cannot hash $1"
+  elif command -v sha256sum >/dev/null 2>&1; then
+    output=$(sha256sum -- "$1") || die "cannot hash $1"
+  else
+    die 'neither shasum nor sha256sum is installed'
+  fi
+  FILE_SHA256=${output%% *}
+}
+
+verify_file() {
+  local file=$1 expected=$2 label=$3
+  hash_file "$file"
+  [[ "$FILE_SHA256" == "$expected" ]] || die "$label has the wrong SHA-256"
+}
+
 SERIAL=
 DISK_GIB=64
 PROVIDER_ENV=
 WIPE=0
+EXPECTED_DEVICE=kodiak
+EXPECTED_FINGERPRINT=google/kodiak/kodiak:17/CD1A.260714.001.A9/15938155:user/release-keys
+EXPECTED_ANDROID_VERSION=17
+EXPECTED_SECURITY_PATCH=2026-08-05
 while (($#)); do
   case "$1" in
     --serial) require_value "$@"; SERIAL=$2; shift 2 ;;
@@ -88,6 +110,9 @@ PAYLOAD=$SCRIPT_DIR/payload
 for file in host-module.zip docker-engine.tgz kernel.lz4 stock-boot.img ksu-init-boot.img ksu-manager.apk ksu-grant-profile controller.tar operator.tar forge-control.apk forge-source.tar forge.lock ops.tar; do
   [[ -f "$PAYLOAD/$file" ]] || die "package file is missing: payload/$file"
 done
+verify_file "$PAYLOAD/stock-boot.img" 5fc827ab5adfaf81f84cd7b1ab8675684e5588aaff832e9ba45051a72d0b06a2 'stock boot image'
+verify_file "$PAYLOAD/ksu-init-boot.img" bd471feb086b8bd0466dd2c1ec52598fbaa4a97c4bde7d58f7b0f051f02e553f 'KernelSU init_boot image'
+verify_file "$PAYLOAD/ksu-manager.apk" fd0b12385c98fe9d5f4f1257b5f184e55c74c1376637507df0718305f5d7a924 'KernelSU Manager APK'
 CONTROLLER_CONFIG_SHA256=$(sed -n 's/^CONTROLLER_CONFIG_SHA256=//p' "$PAYLOAD/forge.lock")
 [[ "$CONTROLLER_CONFIG_SHA256" =~ ^[0-9a-f]{64}$ ]] || die 'payload/forge.lock has an invalid controller config ID'
 
@@ -144,6 +169,25 @@ wait_fastboot() {
   die 'phone did not enter fastboot'
 }
 
+validate_android_target() {
+  local device fingerprint android_version security_patch
+  stage "Verifying supported phone $SERIAL" 'Boot the supported Pixel build, authorize USB debugging, and try again.'
+  device=$("$ADB_BIN" -s "$SERIAL" shell getprop ro.product.device | tr -d '\r')
+  fingerprint=$("$ADB_BIN" -s "$SERIAL" shell getprop ro.build.fingerprint | tr -d '\r')
+  android_version=$("$ADB_BIN" -s "$SERIAL" shell getprop ro.build.version.release | tr -d '\r')
+  security_patch=$("$ADB_BIN" -s "$SERIAL" shell getprop ro.build.version.security_patch | tr -d '\r')
+  [[ "$device" == "$EXPECTED_DEVICE" ]] || die "unsupported device: ${device:-unavailable}"
+  [[ "$fingerprint" == "$EXPECTED_FINGERPRINT" ]] || die "unsupported Android build: ${fingerprint:-unavailable}"
+  [[ "$android_version" == "$EXPECTED_ANDROID_VERSION" ]] || die "unsupported Android version: ${android_version:-unavailable}"
+  [[ "$security_patch" == "$EXPECTED_SECURITY_PATCH" ]] || die "unsupported security patch: ${security_patch:-unavailable}"
+}
+
+validate_fastboot_target() {
+  local product
+  product=$("$FASTBOOT_BIN" -s "$SERIAL" getvar product 2>&1 | sed -n 's/^product: //p')
+  [[ "$product" == "$EXPECTED_DEVICE" ]] || die "unsupported fastboot product: ${product:-unavailable}"
+}
+
 make_shell_root_image() {
   local output_dir=$1
   command -v unzip >/dev/null 2>&1 || die 'unzip is not installed'
@@ -157,12 +201,16 @@ make_shell_root_image() {
   "$ADB_BIN" -s "$SERIAL" pull /data/local/tmp/eip-ksu-shell-root.img "$output_dir/ksu-init-boot.img" >/dev/null
   "$ADB_BIN" -s "$SERIAL" shell rm -f /data/local/tmp/eip-ksud /data/local/tmp/eip-ksu-init-boot.img /data/local/tmp/eip-ksu-shell-root.img
   [[ -s "$output_dir/ksu-init-boot.img" ]] || die 'KernelSU shell-root image was not created'
+  [[ $(wc -c < "$output_dir/ksu-init-boot.img" | tr -d ' ') == 8388608 ]] || \
+    die 'KernelSU shell-root image has the wrong size'
 }
 
 if ((WIPE)); then
+  validate_android_target
   stage "Factory-wiping $SERIAL" 'Check the fastboot error above; do not interrupt an active wipe.'
   "$ADB_BIN" -s "$SERIAL" reboot bootloader >/dev/null 2>&1 || true
   wait_fastboot
+  validate_fastboot_target
   stage 'Wiping Android user data' 'Check the fastboot error above before deciding whether to repeat the wipe.'
   "$FASTBOOT_BIN" -s "$SERIAL" -w
   "$FASTBOOT_BIN" -s "$SERIAL" reboot
@@ -175,21 +223,21 @@ stage 'Waiting for Android setup and authorized USB debugging' 'Complete Android
 until "$ADB_BIN" -s "$SERIAL" shell true >/dev/null 2>&1; do
   sleep 2
 done
+validate_android_target
 
 root_available() {
   [[ $($ADB_BIN -s "$SERIAL" shell "su -c 'id -u'" 2>/dev/null | tr -d '\r') == 0 ]]
 }
 
 bootstrap_root() {
-  local slot product bootstrap_dir
+  local slot bootstrap_dir
   stage 'Preparing KernelSU bootstrap' 'Check the package inputs and the USB error above.'
   bootstrap_dir=$(mktemp -d "${TMPDIR:-/tmp}/eip-forge-bootstrap.XXXXXX")
   make_shell_root_image "$bootstrap_dir"
   slot=$($ADB_BIN -s "$SERIAL" shell getprop ro.boot.slot_suffix | tr -d '\r' | sed 's/^_//')
   "$ADB_BIN" -s "$SERIAL" reboot bootloader >/dev/null 2>&1 || true
   wait_fastboot
-  product=$($FASTBOOT_BIN -s "$SERIAL" getvar product 2>&1 | sed -n 's/^product: //p')
-  [[ "$product" == kodiak ]] || die "unsupported fastboot product: $product"
+  validate_fastboot_target
   case "$slot" in a|b) ;; *) die "cannot determine active slot: $slot" ;; esac
 
   stage "Bootstrapping KernelSU on slot $slot" 'Check the fastboot error and matching firmware inputs before recovery; do not guess a slot.'
@@ -275,6 +323,10 @@ load_image() {
     source=$(printf '%s\n' "$output" | tr -d '\r' | sed -n 's/^Loaded image: //p' | tail -n 1)
   fi
   [[ -n "$source" ]] || die "Docker did not report the image loaded from $archive"
+  if [[ -n "$expected_id" ]]; then
+    current_id=$(phone "DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker image inspect --format '{{.Id}}' $source" | tr -d '\r')
+    [[ "$current_id" == "sha256:$expected_id" ]] || die "$archive loaded the wrong image ID"
+  fi
   phone "DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker tag $source $tag"
 }
 

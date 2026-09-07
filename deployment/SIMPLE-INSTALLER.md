@@ -47,6 +47,10 @@ The first invocation is destructive:
 ./install.sh --serial ADB_SERIAL --wipe
 ```
 
+Before entering the bootloader, the installer requires the exact supported
+device, build fingerprint, Android version, and security patch level. The same
+check runs before a normal installation can bootstrap KernelSU.
+
 After Android restarts, complete setup, connect Wi-Fi, enable USB debugging,
 and authorize the computer again. Then run:
 
@@ -99,6 +103,8 @@ Supplying the optional `--engine`, `--ksu-apk`, `--stock-boot`, and
 
 The builder accepts only the Forge commit in `FORGE_REVISION` and verifies
 that the controller image labels and source archive match that commit.
+The installer rechecks the exact prepared boot inputs before touching the
+phone and verifies the controller image ID after import.
 
 Focused checks:
 
