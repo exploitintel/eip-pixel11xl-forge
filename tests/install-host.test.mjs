@@ -69,7 +69,7 @@ case "$APPLET" in
     elif [ -f "$STATE/low-data-space" ] && [ "$TARGET" = ${shellQuote("DATA_ROOT_PLACEHOLDER")} ]; then
       printf 'fixture 1000 999 1 99%% /\n'
     else
-      printf 'fixture 2000000 1 1999999 1%% /\n'
+      printf 'fixture 5000000 1 4999999 1%% /\n'
     fi
     ;;
   rm) exec /bin/rm "$@" ;;
@@ -196,6 +196,21 @@ test("install-host orders all gates and activates one cross-bound staged install
     assert.match(calls, new RegExp(`prepare-kernel ${buildId} ${item.inputsHash}`));
     assert.equal(fs.existsSync(path.join(item.tmpDir, "eip-engine-prepared")), false);
     assert.equal(fs.existsSync(path.join(item.tmpDir, "eip-kernel-prepared")), false);
+  } finally {
+    remove(item);
+  }
+});
+
+test("free-space gates avoid Android mksh byte-multiplication overflow", () => {
+  assert.doesNotMatch(source, /AVAILABLE_BYTES=\$\(\([^\n]*AVAILABLE_KIB[^\n]*\* 1024\)\)/);
+  assert.match(source, /bb awk -v available="\$TMP_AVAILABLE_KIB" -v required="\$TMP_REQUIRED_BYTES"/);
+  assert.match(source, /bb awk -v available="\$DATA_AVAILABLE_KIB" -v required="\$DATA_REQUIRED_BYTES"/);
+
+  const item = fixture();
+  try {
+    const result = run(item);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^result=activated$/m);
   } finally {
     remove(item);
   }

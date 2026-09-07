@@ -194,18 +194,18 @@ TMP_AVAILABLE_KIB=$(bb df -Pk "$TMPDIR" 2>/dev/null | bb awk '
 ') || fail 'cannot measure installer temporary filesystem free space'
 canonical_unsigned "$TMP_AVAILABLE_KIB" \
   || fail 'installer temporary filesystem free space is malformed'
-TMP_AVAILABLE_BYTES=$((TMP_AVAILABLE_KIB * 1024))
-[ "$TMP_AVAILABLE_BYTES" -ge "$TMP_REQUIRED_BYTES" ] \
-  || fail "insufficient temporary free space: need $TMP_REQUIRED_BYTES bytes, have $TMP_AVAILABLE_BYTES"
+bb awk -v available="$TMP_AVAILABLE_KIB" -v required="$TMP_REQUIRED_BYTES" \
+  'BEGIN { exit !((available * 1024) >= required) }' \
+  || fail "insufficient temporary free space: need $TMP_REQUIRED_BYTES bytes, have $TMP_AVAILABLE_KIB KiB"
 DATA_AVAILABLE_KIB=$(bb df -Pk "$DATA_ROOT" 2>/dev/null | bb awk '
   NR > 1 && $4 ~ /^[0-9]+$/ { value=$4; found++ }
   END { if (found < 1) exit 1; print value }
 ') || fail 'cannot measure persistent data filesystem free space'
 canonical_unsigned "$DATA_AVAILABLE_KIB" \
   || fail 'persistent data filesystem free space is malformed'
-DATA_AVAILABLE_BYTES=$((DATA_AVAILABLE_KIB * 1024))
-[ "$DATA_AVAILABLE_BYTES" -ge "$DATA_REQUIRED_BYTES" ] \
-  || fail "insufficient persistent data free space: need $DATA_REQUIRED_BYTES bytes, have $DATA_AVAILABLE_BYTES"
+bb awk -v available="$DATA_AVAILABLE_KIB" -v required="$DATA_REQUIRED_BYTES" \
+  'BEGIN { exit !((available * 1024) >= required) }' \
+  || fail "insufficient persistent data free space: need $DATA_REQUIRED_BYTES bytes, have $DATA_AVAILABLE_KIB KiB"
 file_identity "$INPUTS" || fail 'cannot rehash installer inputs after space check'
 [ "$IDENTITY_HASH" = "$PINNED_INPUT_HASH" ] || fail 'installer inputs changed during space check'
 

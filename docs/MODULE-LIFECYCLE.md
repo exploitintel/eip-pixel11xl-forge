@@ -40,7 +40,9 @@ alone may use the package-pinned HTTPS origin through a qualified
    temporary filesystem for the archive, two prepared-runtime copies, kernel
    candidate, and a 256 MiB reserve, and under `/data` for one runtime,
    candidate, and another 256 MiB reserve. `kernelctl` separately checks room
-   for the active-slot boot backup immediately before a kernel write.
+   for the active-slot boot backup immediately before a kernel write. Available
+   KiB values are compared in BusyBox awk so Android mksh never multiplies a
+   multi-GiB filesystem size in its signed shell arithmetic.
 4. `prepare-engine` acquires the exact Docker archive, validates its complete
    inventory, patches the eight pinned members, and verifies the generated
    13-member release payload in KernelSU's temporary directory.
