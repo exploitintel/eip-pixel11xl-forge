@@ -1,8 +1,9 @@
 #!/system/bin/sh
 # Root-only lifecycle authority for the generic Android Docker host. It owns
 # disk preparation and Wi-Fi policy around the reviewed dockerd.sh
-# --runtime-only path. It never invokes application hooks,
-# pulls content, force-kills, reformats an existing image, or unmounts.
+# --runtime-only path. An optional, root-provisioned workload profile has two
+# fixed lifecycle phases. This script never pulls content, force-kills,
+# reformats an existing image, or unmounts.
 set -u
 
 DOCKER_ROOT=/data/docker
@@ -27,6 +28,8 @@ LOCK_OWNER=$LOCK_DIR/pid
 LOCK_RECOVERY=$LOCK_DIR/.recovery
 CONFIG_DIR=$DOCKER_ROOT/config
 CONFIG_FILE=$CONFIG_DIR/host.conf
+WORKLOAD_PROFILE_FILE=$CONFIG_DIR/workload-profile.conf
+WORKLOAD_PROFILES_ROOT=$DOCKER_ROOT/workload-profiles
 DOCKER_DISK=$DOCKER_ROOT/disk.img
 DOCKER_DATA=$DOCKER_ROOT/lib
 MOUNTS=/proc/mounts
@@ -34,6 +37,7 @@ IP_FORWARD=/proc/sys/net/ipv4/ip_forward
 ID=$SYSTEM_BIN/id
 DF=$SYSTEM_BIN/df
 E2FSCK=$SYSTEM_BIN/e2fsck
+ENV=$SYSTEM_BIN/env
 IP=$SYSTEM_BIN/ip
 IPTABLES=$SYSTEM_BIN/iptables
 KILL=$SYSTEM_BIN/kill
@@ -45,15 +49,19 @@ READLINK=$SYSTEM_BIN/readlink
 SETSID=$SYSTEM_BIN/setsid
 SLEEP=$SYSTEM_BIN/sleep
 STAT=$SYSTEM_BIN/stat
+SHA256SUM=$SYSTEM_BIN/sha256sum
 SYNC=$SYSTEM_BIN/sync
 TRUNCATE=$SYSTEM_BIN/truncate
 READY_TRIES=30
 STOP_TRIES=30
 SLEEP_SECONDS=2
+WORKLOAD_HOOK_TIMEOUT_SECONDS=240
+WORKLOAD_HOOK_KILL_GRACE_SECONDS=5
 DISK_MIN_BYTES=268435456
 DISK_MAX_BYTES=1099511627776
 DISK_FREE_MARGIN_BYTES=1073741824
 DEFAULT_BRIDGE_POOL_CIDR=172.17.0.0/16
+EXPECTED_ROOT_OWNER=0:0
 EXPECTED_EXT4_FEATURES='^has_journal,^casefold'
 EXPECTED_MOUNT_OPTIONS=noatime,nodev
 DOCKER_HOST=unix://$DOCKER_SOCKET
@@ -66,6 +74,12 @@ DISK_TEMP=
 CREATED_LOOP=
 ROUTE_POLICY_TEMP=
 ROUTE_POLICY_IMAGE=
+WORKLOAD_PROFILE_STATE=none
+WORKLOAD_PROFILE_ID=
+WORKLOAD_PROFILE_DIR=
+WORKLOAD_PROFILE_HOOK=
+WORKLOAD_LOCK_DIR_IDENTITY=
+WORKLOAD_LOCK_OWNER_IDENTITY=
 
 cleanup_route_policy_artifacts() {
   if [ -n "$ROUTE_POLICY_IMAGE" ]; then
@@ -456,6 +470,169 @@ probe_inventory() {
 $INVENTORY_RAW
 EOF
   return 0
+}
+
+valid_workload_profile_id() {
+  case "$1" in
+    [abcdefghijklmnopqrstuvwxyz0123456789]*) ;;
+    *) return 1 ;;
+  esac
+  case "$1" in
+    *[!abcdefghijklmnopqrstuvwxyz0123456789._-]*) return 1 ;;
+  esac
+  [ "${#1}" -le 64 ]
+}
+
+probe_workload_profile() {
+  WORKLOAD_PROFILE_STATE=none
+  WORKLOAD_PROFILE_ID=
+  WORKLOAD_PROFILE_DIR=
+  WORKLOAD_PROFILE_HOOK=
+  if [ ! -e "$WORKLOAD_PROFILE_FILE" ] && [ ! -L "$WORKLOAD_PROFILE_FILE" ]; then
+    return 0
+  fi
+  WORKLOAD_PROFILE_STATE=invalid
+  [ -d "$CONFIG_DIR" ] && [ ! -L "$CONFIG_DIR" ] &&
+    [ "$("$STAT" -c '%u:%g' "$CONFIG_DIR" 2>/dev/null || true)" = "$EXPECTED_ROOT_OWNER" ] &&
+    [ "$("$STAT" -c '%a' "$CONFIG_DIR" 2>/dev/null || true)" = 700 ] \
+    || return 1
+  [ -f "$WORKLOAD_PROFILE_FILE" ] && [ ! -L "$WORKLOAD_PROFILE_FILE" ] &&
+    [ "$("$STAT" -c '%u:%g' "$WORKLOAD_PROFILE_FILE" 2>/dev/null || true)" = "$EXPECTED_ROOT_OWNER" ] &&
+    [ "$("$STAT" -c '%a' "$WORKLOAD_PROFILE_FILE" 2>/dev/null || true)" = 600 ] \
+    || return 1
+  WORKLOAD_PROFILE_PARSED=$("$SYSTEM_BIN/awk" -F= '
+    NR == 1 && $0 == "WORKLOAD_PROFILE_VERSION=1" { version = 1; next }
+    NR == 2 && $1 == "PROFILE_ID" && NF == 2 && length($2) >= 1 &&
+      length($2) <= 64 && substr($2, 1, 1) ~ /^[abcdefghijklmnopqrstuvwxyz0123456789]$/ &&
+      $2 !~ /[^abcdefghijklmnopqrstuvwxyz0123456789._-]/ { id = $2; next }
+    NR == 3 && $1 == "HOOK_SIZE" && NF == 2 && substr($2, 1, 1) ~ /^[123456789]$/ &&
+      $2 !~ /[^0123456789]/ { size = $2; next }
+    NR == 4 && $1 == "HOOK_SHA256" && NF == 2 && length($2) == 64 &&
+      $2 !~ /[^0123456789abcdef]/ { hash = $2; next }
+    { bad = 1 }
+    END {
+      if (bad || NR != 4 || !version || id == "" || size == "" || hash == "") exit 1
+      printf "%s|%s|%s\n", id, size, hash
+    }
+  ' "$WORKLOAD_PROFILE_FILE" 2>/dev/null) || return 1
+  OLD_IFS=$IFS
+  IFS='|'
+  read -r WORKLOAD_PROFILE_ID WORKLOAD_PROFILE_SIZE WORKLOAD_PROFILE_HASH <<EOF
+$WORKLOAD_PROFILE_PARSED
+EOF
+  IFS=$OLD_IFS
+  valid_workload_profile_id "$WORKLOAD_PROFILE_ID" || return 1
+  case "$WORKLOAD_PROFILE_SIZE" in
+    ''|0|0*|*[!0123456789]*) return 1 ;;
+  esac
+  [ "${#WORKLOAD_PROFILE_HASH}" -eq 64 ] || return 1
+  case "$WORKLOAD_PROFILE_HASH" in
+    *[!0123456789abcdef]*) return 1 ;;
+  esac
+  WORKLOAD_PROFILE_DESCRIPTOR_SIZE=$("$STAT" -c '%s' "$WORKLOAD_PROFILE_FILE" 2>/dev/null) \
+    || return 1
+  # The four validated ASCII records have 127 fixed bytes, including their
+  # four LF terminators, plus the variable profile ID and size digits.
+  WORKLOAD_PROFILE_CANONICAL_SIZE=$((127 + ${#WORKLOAD_PROFILE_ID} + ${#WORKLOAD_PROFILE_SIZE}))
+  [ "$WORKLOAD_PROFILE_DESCRIPTOR_SIZE" = "$WORKLOAD_PROFILE_CANONICAL_SIZE" ] || return 1
+  [ -d "$WORKLOAD_PROFILES_ROOT" ] && [ ! -L "$WORKLOAD_PROFILES_ROOT" ] &&
+    [ "$("$STAT" -c '%u:%g' "$WORKLOAD_PROFILES_ROOT" 2>/dev/null || true)" = "$EXPECTED_ROOT_OWNER" ] &&
+    [ "$("$STAT" -c '%a' "$WORKLOAD_PROFILES_ROOT" 2>/dev/null || true)" = 700 ] \
+    || return 1
+  WORKLOAD_PROFILE_DIR=$WORKLOAD_PROFILES_ROOT/$WORKLOAD_PROFILE_ID
+  WORKLOAD_PROFILE_HOOK=$WORKLOAD_PROFILE_DIR/hook
+  [ -d "$WORKLOAD_PROFILE_DIR" ] && [ ! -L "$WORKLOAD_PROFILE_DIR" ] &&
+    [ "$("$STAT" -c '%u:%g' "$WORKLOAD_PROFILE_DIR" 2>/dev/null || true)" = "$EXPECTED_ROOT_OWNER" ] &&
+    [ "$("$STAT" -c '%a' "$WORKLOAD_PROFILE_DIR" 2>/dev/null || true)" = 700 ] \
+    || return 1
+  [ "$(LC_ALL=C ls -A "$WORKLOAD_PROFILE_DIR" 2>/dev/null || true)" = hook ] || return 1
+  [ -f "$WORKLOAD_PROFILE_HOOK" ] && [ ! -L "$WORKLOAD_PROFILE_HOOK" ] &&
+    [ "$("$STAT" -c '%u:%g' "$WORKLOAD_PROFILE_HOOK" 2>/dev/null || true)" = "$EXPECTED_ROOT_OWNER" ] &&
+    [ "$("$STAT" -c '%a' "$WORKLOAD_PROFILE_HOOK" 2>/dev/null || true)" = 700 ] &&
+    [ "$("$STAT" -c '%s' "$WORKLOAD_PROFILE_HOOK" 2>/dev/null || true)" = "$WORKLOAD_PROFILE_SIZE" ] \
+    || return 1
+  [ -x "$SHA256SUM" ] && [ -x "$ENV" ] || return 1
+  WORKLOAD_PROFILE_ACTUAL_HASH=$("$SHA256SUM" "$WORKLOAD_PROFILE_HOOK" 2>/dev/null |
+    "$SYSTEM_BIN/awk" '
+      NR == 1 && length($1) == 64 && $1 !~ /[^0123456789abcdef]/ { hash = $1; next }
+      { bad = 1 }
+      END { if (bad || NR != 1 || hash == "") exit 1; print hash }
+    ') || return 1
+  [ "$WORKLOAD_PROFILE_ACTUAL_HASH" = "$WORKLOAD_PROFILE_HASH" ] || return 1
+  WORKLOAD_PROFILE_STATE=ready
+  return 0
+}
+
+require_workload_profile() {
+  probe_workload_profile \
+    || die 'configured workload profile is malformed, tampered, or unsafe'
+}
+
+probe_owned_lifecycle_lock() {
+  [ "$LOCK_OWNED" = 1 ] || return 1
+  [ -d "$LOCK_DIR" ] && [ ! -L "$LOCK_DIR" ] || return 1
+  [ "$(LC_ALL=C ls -A "$LOCK_DIR" 2>/dev/null || true)" = pid ] || return 1
+  CURRENT_LOCK_DIR_IDENTITY=$("$STAT" -c '%d:%i:%u:%g:%a' "$LOCK_DIR" 2>/dev/null) \
+    || return 1
+  case "$CURRENT_LOCK_DIR_IDENTITY" in
+    *:*:"$EXPECTED_ROOT_OWNER":700) ;;
+    *) return 1 ;;
+  esac
+  [ -f "$LOCK_OWNER" ] && [ ! -L "$LOCK_OWNER" ] || return 1
+  CURRENT_LOCK_OWNER_IDENTITY=$("$STAT" -c '%d:%i:%u:%g:%a:%h:%s' "$LOCK_OWNER" 2>/dev/null) \
+    || return 1
+  LOCK_SELF_PID=$$
+  EXPECTED_LOCK_OWNER_SIZE=$((${#LOCK_SELF_PID} + 1))
+  case "$CURRENT_LOCK_OWNER_IDENTITY" in
+    *:*:"$EXPECTED_ROOT_OWNER":600:1:"$EXPECTED_LOCK_OWNER_SIZE") ;;
+    *) return 1 ;;
+  esac
+  [ "$(cat "$LOCK_OWNER" 2>/dev/null || true)" = "$$" ]
+}
+
+capture_workload_lifecycle_lock() {
+  probe_owned_lifecycle_lock \
+    || die 'lifecycle lock is not physically owned before the workload hook'
+  WORKLOAD_LOCK_DIR_IDENTITY=$CURRENT_LOCK_DIR_IDENTITY
+  WORKLOAD_LOCK_OWNER_IDENTITY=$CURRENT_LOCK_OWNER_IDENTITY
+}
+
+reprove_workload_lifecycle_lock() {
+  probe_owned_lifecycle_lock \
+    || die 'lifecycle lock ownership changed during the workload hook'
+  [ "$CURRENT_LOCK_DIR_IDENTITY" = "$WORKLOAD_LOCK_DIR_IDENTITY" ] &&
+    [ "$CURRENT_LOCK_OWNER_IDENTITY" = "$WORKLOAD_LOCK_OWNER_IDENTITY" ] \
+    || die 'lifecycle lock identity changed during the workload hook'
+}
+
+run_workload_profile_hook() {
+  WORKLOAD_PROFILE_PHASE=$1
+  [ "$LOCK_OWNED" = 1 ] || die 'internal workload profile invocation is outside the lifecycle lock'
+  case "$WORKLOAD_PROFILE_PHASE" in
+    post-start|pre-stop) ;;
+    *) die 'internal workload profile phase is invalid' ;;
+  esac
+  require_workload_profile
+  [ "$WORKLOAD_PROFILE_STATE" = ready ] || return 0
+  capture_workload_lifecycle_lock
+  "$KSU_BUSYBOX" timeout -k "$WORKLOAD_HOOK_KILL_GRACE_SECONDS" \
+    "$WORKLOAD_HOOK_TIMEOUT_SECONDS" \
+    "$ENV" -i PATH="$PATH" DOCKER_HOST="$DOCKER_HOST" \
+    WORKLOAD_PROFILE_ID="$WORKLOAD_PROFILE_ID" \
+    "$WORKLOAD_PROFILE_HOOK" "$WORKLOAD_PROFILE_PHASE" </dev/null 1>&2
+  WORKLOAD_PROFILE_STATUS=$?
+  reprove_workload_lifecycle_lock
+  [ "$WORKLOAD_PROFILE_STATUS" -eq 0 ] \
+    || die "workload profile $WORKLOAD_PROFILE_ID $WORKLOAD_PROFILE_PHASE hook failed (status=$WORKLOAD_PROFILE_STATUS)"
+}
+
+reprove_daemon_after_workload_hook() {
+  REPROVE_WORKLOAD_PID=$1
+  REPROVE_WORKLOAD_PHASE=$2
+  probe_daemon
+  [ "$DAEMON_STATE" = running ] && [ "$DAEMON_PID" = "$REPROVE_WORKLOAD_PID" ] &&
+    exact_daemon_pid "$REPROVE_WORKLOAD_PID" \
+    || die "Docker daemon identity changed during the workload $REPROVE_WORKLOAD_PHASE hook; no signal was sent"
 }
 
 validate_disk_size() {
@@ -1262,6 +1439,7 @@ require_kernel_capabilities() {
 
 start_host() {
   acquire_lock
+  require_workload_profile
   probe_daemon
   case "$DAEMON_STATE" in
     running) DAEMON_ALREADY_RUNNING=1 ;;
@@ -1282,6 +1460,11 @@ start_host() {
   ensure_api_firewall
   if [ "$DAEMON_ALREADY_RUNNING" = 1 ]; then
     ensure_wifi_policy
+    POST_START_PID=$DAEMON_PID
+    run_workload_profile_hook post-start
+    if [ "$WORKLOAD_PROFILE_STATE" = ready ]; then
+      reprove_daemon_after_workload_hook "$POST_START_PID" post-start
+    fi
     printf '%s\n' 'result=running'
     return 0
   fi
@@ -1301,6 +1484,11 @@ start_host() {
   [ "$DAEMON_STATE" = running ] \
     || die "Docker did not become ready (state=$DAEMON_STATE); no signal was sent"
   ensure_wifi_policy
+  POST_START_PID=$DAEMON_PID
+  run_workload_profile_hook post-start
+  if [ "$WORKLOAD_PROFILE_STATE" = ready ]; then
+    reprove_daemon_after_workload_hook "$POST_START_PID" post-start
+  fi
   printf '%s\n' 'result=running'
 }
 
@@ -1321,11 +1509,15 @@ stop_host() {
     *) die "Docker daemon identity is $DAEMON_STATE; refusing stop" ;;
   esac
 
+  STOP_PID=$DAEMON_PID
+  run_workload_profile_hook pre-stop
+  if [ "$WORKLOAD_PROFILE_STATE" = ready ]; then
+    reprove_daemon_after_workload_hook "$STOP_PID" pre-stop
+  fi
   if ! probe_inventory; then
     die 'Docker container inventory is unknown; refusing stop'
   fi
   [ "$INVENTORY_COUNT" -eq 0 ] || die "Docker has $INVENTORY_COUNT running container(s); refusing stop"
-  STOP_PID=$DAEMON_PID
   probe_daemon
   [ "$DAEMON_STATE" = running ] && [ "$DAEMON_PID" = "$STOP_PID" ] && exact_daemon_pid "$STOP_PID" \
     || die 'Docker daemon identity changed before TERM'

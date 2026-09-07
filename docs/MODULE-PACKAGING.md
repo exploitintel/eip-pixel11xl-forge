@@ -1,7 +1,7 @@
 # Installable qualification module packaging
 
 The current packaging path produces a deterministic, executable
-KernelSU-Next qualification installer for module version `0.1.0-rc.1`. It no
+KernelSU-Next qualification installer for module version `0.1.0-rc.2`. It no
 longer produces the old development-abort ZIP. It does not publish a release,
 update feed, or signature, and running the packaging workflow performs no
 phone, daemon, boot-partition, or network-policy action.
@@ -82,7 +82,7 @@ python3 tools/assemble-module.py \
   --route-policy /new/module-tools/route-policy \
   --toolchain-provenance tools/aarch64-musl-toolchain.json \
   --musl-license tools/licenses/musl-COPYRIGHT \
-  --output /new/eip-pixel11xl-forge-0.1.0-rc.1.zip
+  --output /new/eip-pixel11xl-forge-0.1.0-rc.2.zip
 ```
 
 ## Package contents
@@ -108,9 +108,18 @@ update feed. Keeping Docker and the build-specific kernel outside the module
 keeps the installer small and makes those large inputs independently
 replaceable only when their exact records change.
 
+An external root provisioner may activate one generic workload profile after
+installation. The descriptor never enters the ZIP or immutable public release:
+it selects only the fixed
+`/data/docker/workload-profiles/PROFILE_ID/hook` path and binds that hook's
+exact size and SHA-256. `hostctl` verifies the descriptor, fixed path, root
+ownership, restrictive modes, and hook identity before invoking either of its
+two fixed lifecycle phases under the public host lock. See
+[MODULE-LIFECYCLE.md](MODULE-LIFECYCLE.md#optional-workload-profile).
+
 The packaged uninstall hook uses the exact packaged kernel controller,
 preflight, boot-swap helper, and installer inputs to publish a standalone
-versioned recovery kit under `/data/docker/recovery/0.1.0-rc.1` before
+versioned recovery kit under `/data/docker/recovery/0.1.0-rc.2` before
 KernelSU removes the module directory. The kit's generated
 `recovery-manifest.tsv` binds its own contents, modes, and exact KernelSU-Next
 3.3.0 version code and LKM environment. It is persistent host recovery state,
@@ -157,7 +166,7 @@ Successful preflight produces exactly:
 
 ```text
 INSTALL_PREFLIGHT_VERSION=1
-module_version=0.1.0-rc.1
+module_version=0.1.0-rc.2
 build_id=CD1A.260714.001.A9
 slot_suffix=_a|_b
 boot_state=ROLE

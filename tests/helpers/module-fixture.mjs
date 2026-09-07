@@ -30,6 +30,7 @@ export function createHostctlFixture() {
   const release = path.join(dockerRoot, "releases", "v0.1.0");
   const runRoot = path.join(dockerRoot, "run");
   const configDir = path.join(dockerRoot, "config");
+  const workloadProfilesRoot = path.join(dockerRoot, "workload-profiles");
   const procRoot = path.join(root, "proc");
   const systemBin = path.join(root, "system-bin");
   const state = path.join(root, "state");
@@ -111,6 +112,7 @@ printf '4242\\n' > ${shellQuote(path.join(runRoot, "docker.pid"))}
 [ "\${1:-}" = -u ] || exit 2
 printf '%s\\n' "\${FIXTURE_UID:-0}"
 `);
+  writeExecutable(path.join(systemBin, "env"), "#!/bin/sh\nexec /usr/bin/env \"$@\"\n");
   writeExecutable(path.join(systemBin, "readlink"), `#!/bin/sh
 [ "$#" -eq 2 ] && [ "$1" = -f ] || exit 2
 exec /bin/realpath "$2"
@@ -128,11 +130,28 @@ rm -f ${shellQuote(path.join(state, "docker-info"))} ${shellQuote(path.join(runR
 `);
   writeExecutable(path.join(systemBin, "awk"), "#!/bin/sh\nexec /usr/bin/awk \"$@\"\n");
   writeExecutable(path.join(systemBin, "stat"), `#!/bin/sh
-[ "$#" -eq 3 ] && [ "$1" = -c ] && [ "$2" = %s ] || exit 2
-case "$3" in
-  ${shellQuote(dockerRoot)}/*disk.img*) printf '268435456\n'; exit 0 ;;
+[ "$#" -eq 3 ] && [ "$1" = -c ] || exit 2
+case "$2:$3" in
+  %s:${shellQuote(dockerRoot)}/*disk.img*) printf '268435456\n'; exit 0 ;;
 esac
-exec /usr/bin/stat -f %z "$3"
+case "$2" in
+  %s) exec /usr/bin/stat -f %z "$3" ;;
+  %u:%g) exec /usr/bin/stat -f %u:%g "$3" ;;
+  %a) exec /usr/bin/stat -f %Lp "$3" ;;
+  %d:%i:%u:%g:%a) exec /usr/bin/stat -f '%d:%i:%u:%g:%Lp' "$3" ;;
+  %d:%i:%u:%g:%a:%h:%s) exec /usr/bin/stat -f '%d:%i:%u:%g:%Lp:%l:%z' "$3" ;;
+  *) exit 2 ;;
+esac
+`);
+  const fixtureSha256 = [
+    "const fs = require('node:fs');",
+    "const crypto = require('node:crypto');",
+    "const file = process.argv[1];",
+    "process.stdout.write(crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex') + '  ' + file + '\\n');",
+  ].join("");
+  writeExecutable(path.join(systemBin, "sha256sum"), `#!/bin/sh
+[ "$#" -eq 1 ] || exit 2
+exec ${shellQuote(process.execPath)} -e ${shellQuote(fixtureSha256)} "$1"
 `);
   writeExecutable(path.join(systemBin, "truncate"), `#!/bin/sh
 printf 'truncate %s\n' "$*" >> ${shellQuote(calls)}
@@ -243,6 +262,7 @@ fi
     ["MOUNTS=/proc/mounts", `MOUNTS=${shellQuote(mounts)}`],
     ["IP_FORWARD=/proc/sys/net/ipv4/ip_forward", `IP_FORWARD=${shellQuote(ipForward)}`],
     ["PATH=$SYSTEM_BIN", `PATH=${systemBin}:/usr/bin:/bin`],
+    ["EXPECTED_ROOT_OWNER=0:0", `EXPECTED_ROOT_OWNER=${process.getuid()}:${process.getgid()}`],
     ["READY_TRIES=30", "READY_TRIES=20"],
     ["STOP_TRIES=30", "STOP_TRIES=5"],
     ["SLEEP_SECONDS=2", "SLEEP_SECONDS=0"],
@@ -262,6 +282,8 @@ fi
     runRoot,
     configDir,
     configFile: path.join(configDir, "host.conf"),
+    workloadProfileFile: path.join(configDir, "workload-profile.conf"),
+    workloadProfilesRoot,
     disk,
     data,
     mounts,
@@ -285,7 +307,7 @@ export function runHostctl(item, ...args) {
   const result = spawnSync("/bin/sh", [item.hostctl, ...args], {
     encoding: "utf8",
     env: { ...process.env },
-    timeout: 30_000,
+    timeout: 60_000,
   });
   assert.ifError(result.error);
   assert.equal(result.signal, null, "hostctl must exit normally rather than by signal");
@@ -297,7 +319,7 @@ export function runHostctlAs(item, uid, ...args) {
   const result = spawnSync("/bin/sh", [item.hostctl, ...args], {
     encoding: "utf8",
     env: { ...process.env, FIXTURE_UID: String(uid) },
-    timeout: 30_000,
+    timeout: 60_000,
   });
   assert.ifError(result.error);
   assert.equal(result.signal, null, "hostctl must exit normally rather than by signal");

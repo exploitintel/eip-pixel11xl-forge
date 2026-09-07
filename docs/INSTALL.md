@@ -1,6 +1,6 @@
 # Pixel qualification install guide
 
-This guide is for the `0.1.0-rc.1` qualification package on one exact Pixel 11
+This guide is for the `0.1.0-rc.2` qualification package on one exact Pixel 11
 Pro XL. It is not a public release procedure. No signed public ZIP or update
 feed exists yet. The static AArch64 tools have been built twice locally with
 byte-identical outputs and executed in an isolated Linux/AArch64 environment.
@@ -83,7 +83,7 @@ Never guess the slot and never substitute a boot image from another build.
 The required files are:
 
 ```text
-eip-pixel11xl-forge-0.1.0-rc.1.zip
+eip-pixel11xl-forge-0.1.0-rc.2.zip
 docker-29.8.0.tgz
 Image-CD1A.260714.001.A9.lz4
 ```
@@ -133,7 +133,7 @@ cannot.
 ## Install through KernelSU-Next Manager
 
 1. Confirm KernelSU-Next reports version 3.3.0 and LKM mode.
-2. Select `eip-pixel11xl-forge-0.1.0-rc.1.zip` in the module installer.
+2. Select `eip-pixel11xl-forge-0.1.0-rc.2.zip` in the module installer.
 3. Read the complete installer output. Do not treat a refusal as a warning.
 4. Reboot only if the manager reports a clean module installation and no
    recovery-attention message.
@@ -191,8 +191,13 @@ space.
 
 Then select `Start Forge host`. Start requires connected Wi-Fi on `wlan0`,
 rejects route overlap, converges the bounded Wi-Fi policy and loopback Docker
-API firewall, verifies the exact runtime, and starts Docker. It does not invoke
-private Forge deployment hooks or run a CVE workload.
+API firewall, verifies the exact runtime, and starts Docker. On an unextended
+public installation it does not deploy or run an application workload. If a
+separate root provisioner has installed the exact optional workload profile
+defined in [MODULE-LIFECYCLE.md](MODULE-LIFECYCLE.md#optional-workload-profile),
+Start invokes its identity-checked `post-start` phase after host readiness. A
+profile refusal is a failed Start even though a newly started Docker daemon is
+left running for safe diagnosis.
 
 The root shell status command is:
 
@@ -233,9 +238,13 @@ cellular behavior.
 ## Stop and autostart
 
 `Stop Forge host` refuses while the running-container inventory is nonzero or
-unknown. Park or stop the containers through their owning workflow, invoke the
-Action again, select Stop, and confirm. It sends a normal `TERM` only to the
-exact managed daemon and never force-kills or unmounts storage.
+unknown. With no workload profile, park or stop the containers through their
+owning workflow before selecting Stop. An active profile gets one synchronous
+`pre-stop` phase under the host lock before inventory, allowing its owner to
+park only its own containers. Hook failure, changed daemon identity, or a
+remaining container refuses Stop without a host signal. A clean Stop sends a
+normal `TERM` only to the exact managed daemon and never force-kills or
+unmounts storage.
 
 Autostart is an explicit Action choice. When enabled, the post-boot hook starts
 the host only after strict config, kernel capability, active-slot identity, and
@@ -262,7 +271,7 @@ and ignores the hook's exit status. The hook cannot block removal. It first
 publishes a standalone recovery kit at:
 
 ```text
-/data/docker/recovery/0.1.0-rc.1/
+/data/docker/recovery/0.1.0-rc.2/
 ```
 
 Read the uninstall output and require the exact `standalone recovery kit ready`
@@ -284,9 +293,9 @@ The manager still removes the module directory.
 The external kit remains available after manager removal:
 
 ```text
-KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.1/bin/kernelctl status
-KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.1/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_a
-KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.1/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_b
+KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.2/bin/kernelctl status
+KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.2/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_a
+KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.2/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_b
 ```
 
 Run status first and use only the restore token matching its reported active
@@ -294,7 +303,7 @@ suffix. If the host stop failed, use the exact versioned command printed by
 the hook, such as:
 
 ```text
-/data/docker/releases/0.1.0-rc.1/hostctl stop
+/data/docker/releases/0.1.0-rc.2/hostctl stop
 ```
 
 The fastboot fallback remains:
@@ -306,8 +315,8 @@ fastboot flash boot_b /off-device/path/to/CD1A.260714.001.A9/boot.img
 
 Use only the active-slot line. Manager uninstall preserves the Docker disk and
 data, immutable releases, downloaded inputs, staged kernel, boot backups,
-standalone recovery kit, and diagnostic material. It never erases or restores
-these automatically.
+any externally provisioned workload profile, standalone recovery kit, and
+diagnostic material. It never erases or restores these automatically.
 
 ## Qualification record
 

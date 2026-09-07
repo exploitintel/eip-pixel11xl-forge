@@ -363,8 +363,8 @@ function makeUninstallFixture({ uid = 0, bootState = "stock" } = {}) {
   fs.writeFileSync(path.join(moduleDir, "module.prop"), [
     "id=eip-pixel11xl-forge",
     "name=EIP Pixel 11 Pro XL Forge",
-    "version=0.1.0-rc.1",
-    "versionCode=2",
+    "version=0.1.0-rc.2",
+    "versionCode=3",
     "author=Exploit Intel",
     "description=Pixel 11 Pro XL Docker host installer (Wi-Fi only)",
     "",
@@ -482,7 +482,7 @@ esac
     stopStatus, stopOutput, transactionStatus, transactionFailAfterUnlink,
     transactionFailWithJournal, deactivationRecord, kernelStatusCode, kernelStatusFile, uninstall,
     activeLink: path.join(dockerRoot, "bin"),
-    recoveryDir: path.join(dockerRoot, "recovery", "0.1.0-rc.1"),
+    recoveryDir: path.join(dockerRoot, "recovery", "0.1.0-rc.2"),
   };
 }
 
@@ -586,7 +586,7 @@ test("Uninstall propagates kernel recovery status 3 and preserves everything", (
     const result = runUninstall(item);
     assert.equal(result.status, 3);
     assert.match(result.stderr, /RECOVERY ATTENTION/);
-    assert.match(result.stderr, /recovery\/0\.1\.0-rc\.1\/bin\/kernelctl status/);
+    assert.match(result.stderr, /recovery\/0\.1\.0-rc\.2\/bin\/kernelctl status/);
     assert.equal(fs.readlinkSync(item.activeLink), "releases/v1");
     assertPreserved(item);
   } finally {

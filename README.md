@@ -4,7 +4,7 @@
 
 | Device | Android build | Security patch | Kernel source | KernelSU-Next | Network | Package status |
 | --- | --- | --- | --- | --- | --- | --- |
-| Pixel 11 Pro XL (`kodiak`) | `CD1A.260714.001.A9` | 2026-08-05 | `5c5f2fea42dd4cc5ae1002945d86e305c09d3262` | 3.3.0 in LKM mode | Wi-Fi only | `0.1.0-rc.1` installable qualification source |
+| Pixel 11 Pro XL (`kodiak`) | `CD1A.260714.001.A9` | 2026-08-05 | `5c5f2fea42dd4cc5ae1002945d86e305c09d3262` | 3.3.0 in LKM mode | Wi-Fi only | `0.1.0-rc.2` installable qualification source |
 
 This repository packages the public host layer needed to run Docker Engine on
 one exact Pixel 11 Pro XL build. It contains reproducible kernel inputs,
@@ -25,7 +25,7 @@ has no `updateJson`.
 
 ## What the RC installer does
 
-The `0.1.0-rc.1` qualification package is an executable installer, not the old
+The `0.1.0-rc.2` qualification package is an executable installer, not the old
 development-abort ZIP. Assembly requires an explicit `--installable` flag.
 The ZIP carries the module scripts, exact input records, four static AArch64
 helpers, provenance, notices, and internal integrity manifests. It does not
@@ -115,9 +115,16 @@ after `wlan0` regains an IPv4 address rechecks the disk and mount, bridge-pool
 overlap, Wi-Fi policy rules, IPv4 forwarding, loopback Docker API firewall,
 and exact daemon identity before returning `result=running`.
 
+A separate root provisioner may install one optional, hash-bound workload
+profile. Its fixed `post-start` and `pre-stop` phases run synchronously under
+the same host lifecycle lock, so an application can converge only after Docker
+is ready and park its own containers before the conservative zero-container
+stop check. The public module ships no profile and remains inert by default.
+See [docs/MODULE-LIFECYCLE.md](docs/MODULE-LIFECYCLE.md#optional-workload-profile).
+
 KernelSU cannot cancel module removal based on an uninstall-hook exit status.
 The hook first publishes a standalone versioned recovery kit under
-`/data/docker/recovery/0.1.0-rc.1`, then performs only cleanup it can prove
+`/data/docker/recovery/0.1.0-rc.2`, then performs only cleanup it can prove
 safe. A public or unknown kernel state or a failed daemon stop preserves the
 active host link, releases, data, kernel, backups, and recovery kit while the
 manager still removes the module directory. The kit retains exact kernel

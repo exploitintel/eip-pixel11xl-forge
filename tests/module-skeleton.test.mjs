@@ -392,5 +392,5 @@ test("module lifecycle sources contain no private deployment coupling", () => {
     "i",
   );
   assert.doesNotMatch(sources, privateMaterial);
-  assert.doesNotMatch(sources, /ollama|deepseek|anthropic|openai|gemini|workload-profile|companion/i);
+  assert.doesNotMatch(sources, /ollama|deepseek|anthropic|openai|gemini|companion/i);
 });

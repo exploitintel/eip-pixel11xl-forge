@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -58,6 +59,33 @@ case "$applet" in
   chmod) exec /bin/chmod "$@" ;;
   tar) exec /usr/bin/tar "$@" ;;
   zcat) exec /bin/cat "$@" ;;
+  timeout)
+    [ "$1" = -k ] && [ "$2" = 5 ] && [ "$3" = 240 ] || exit 98
+    shift 3
+    if [ ! -f ${shellQuote(path.join(item.state, "force-hook-timeout"))} ]; then
+      exec "$@"
+    fi
+    "$@" &
+    child=$!
+    ready_tries=0
+    while [ ! -f ${shellQuote(path.join(item.state, "hook-timeout-ready"))} ]; do
+      /bin/kill -0 "$child" 2>/dev/null || { wait "$child"; exit $?; }
+      [ "$ready_tries" -lt 200 ] || {
+        /bin/kill -KILL "$child" 2>/dev/null || true
+        wait "$child" 2>/dev/null || true
+        exit 99
+      }
+      /bin/sleep 0.05
+      ready_tries=$((ready_tries + 1))
+    done
+    /bin/kill -TERM "$child" 2>/dev/null || exit 97
+    /bin/sleep 0.05
+    /bin/kill -0 "$child" 2>/dev/null || { wait "$child"; exit 96; }
+    : > ${shellQuote(path.join(item.state, "hook-survived-term"))}
+    /bin/kill -KILL "$child" 2>/dev/null || exit 95
+    wait "$child"
+    exit $?
+    ;;
   *) exit 2 ;;
 esac
 `);
@@ -166,6 +194,41 @@ function clearPreparedStorage(item) {
   fs.writeFileSync(item.loopState, "none\n");
 }
 
+function installWorkloadProfile(item, {
+  id = "fixture.profile",
+  source = null,
+} = {}) {
+  const profileDir = path.join(item.workloadProfilesRoot, id);
+  const hook = path.join(profileDir, "hook");
+  fs.chmodSync(item.configDir, 0o700);
+  fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(item.workloadProfilesRoot, 0o700);
+  fs.chmodSync(profileDir, 0o700);
+  writeExecutable(hook, source ?? `#!/bin/sh
+LOCK=${shellQuote(path.join(item.runRoot, "host-lifecycle.lock", "pid"))}
+[ "$#" -eq 1 ] || exit 91
+case "$1" in post-start|pre-stop) ;; *) exit 92 ;; esac
+[ -f "$LOCK" ] || exit 93
+[ "$PATH" = ${shellQuote(`${path.join(item.root, "system-bin")}:/usr/bin:/bin`)} ] || exit 94
+[ "$DOCKER_HOST" = ${shellQuote(`unix://${path.join(item.runRoot, "docker.sock")}`)} ] || exit 95
+[ "$WORKLOAD_PROFILE_ID" = ${shellQuote(id)} ] || exit 96
+[ "\${HOME+x}" != x ] || exit 97
+printf 'workload-hook %s lock=held\n' "$1" >> ${shellQuote(item.calls)}
+`);
+  fs.chmodSync(hook, 0o700);
+  const contents = fs.readFileSync(hook);
+  const hash = crypto.createHash("sha256").update(contents).digest("hex");
+  fs.writeFileSync(item.workloadProfileFile, [
+    "WORKLOAD_PROFILE_VERSION=1",
+    `PROFILE_ID=${id}`,
+    `HOOK_SIZE=${contents.length}`,
+    `HOOK_SHA256=${hash}`,
+    "",
+  ].join("\n"), { mode: 0o600 });
+  fs.chmodSync(item.workloadProfileFile, 0o600);
+  return { profileDir, hook, hash };
+}
+
 test("hostctl exposes only the bounded generic lifecycle contract", () => {
   assert.match(hostctlSource, /^LOCK_DIR=\$RUN_ROOT\/host-lifecycle\.lock$/m);
   assert.match(hostctlSource, /^LOCK_RECOVERY=\$LOCK_DIR\/\.recovery$/m);
@@ -184,9 +247,155 @@ test("hostctl exposes only the bounded generic lifecycle contract", () => {
   assert.doesNotMatch(hostctlSource, /^PATH=.*DOCKER_ROOT/m);
   assert.doesNotMatch(hostctlSource, /(?:^|[;&|]\s*)(?:umount|curl|wget)\b/m);
   assert.doesNotMatch(hostctlSource, /(?:kill|\$KILL)\s+-(?:9|KILL)\b/);
-  assert.doesNotMatch(hostctlSource, /workload-profile|companion|provider/i);
+  assert.match(hostctlSource, /^WORKLOAD_PROFILE_FILE=\$CONFIG_DIR\/workload-profile\.conf$/m);
+  assert.match(hostctlSource, /^WORKLOAD_PROFILES_ROOT=\$DOCKER_ROOT\/workload-profiles$/m);
+  assert.match(hostctlSource, /"\$ENV" -i PATH="\$PATH" DOCKER_HOST="\$DOCKER_HOST"/);
+  assert.match(hostctlSource, /"\$KSU_BUSYBOX" timeout -k "\$WORKLOAD_HOOK_KILL_GRACE_SECONDS"/);
+  assert.match(hostctlSource, /"\$WORKLOAD_PROFILE_HOOK" "\$WORKLOAD_PROFILE_PHASE" <\/dev\/null 1>&2/);
+  assert.doesNotMatch(hostctlSource, /\beval\b|(?:sh|bash)\s+-c|companion|provider/i);
   assert.doesNotMatch(hostctlSource, /(?:curl|wget)|"\$EXPECTED_DOCKER" pull/);
 });
+
+fixtureTest("an absent workload profile preserves the inert host lifecycle", (item) => {
+  fs.mkdirSync(path.join(item.workloadProfilesRoot, "inactive"), { recursive: true });
+  fs.writeFileSync(path.join(item.workloadProfilesRoot, "inactive", "hook"), "not active\n");
+  const result = runHostctl(item, "start");
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "result=running\n");
+  assert.doesNotMatch(readCalls(item), /workload-hook/);
+});
+
+fixtureTest("start runs the exact post-start hook under the lifecycle lock after host readiness", (item) => {
+  installWorkloadProfile(item);
+  let result = runHostctl(item, "start");
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "result=running\n");
+  let calls = readCalls(item);
+  assert.equal((calls.match(/^workload-hook post-start lock=held$/gm) ?? []).length, 1);
+  assert.ok(calls.indexOf("dockerd.sh --runtime-only") < calls.indexOf("workload-hook post-start"));
+
+  result = runHostctl(item, "start");
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "result=running\n");
+  calls = readCalls(item);
+  assert.equal((calls.match(/^workload-hook post-start lock=held$/gm) ?? []).length, 2);
+  assert.equal((calls.match(/^setsid .*\/dockerd\.sh --runtime-only$/gm) ?? []).length, 1);
+});
+
+fixtureTest("a post-start hook failure is visible and leaves the ready daemon running", (item) => {
+  installWorkloadProfile(item, { source: `#!/bin/sh
+printf 'workload-hook %s failed\n' "$1" >> ${shellQuote(item.calls)}
+exit 73
+` });
+  const result = runHostctl(item, "start");
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /fixture\.profile post-start hook failed \(status=73\)/);
+  assert.equal(fs.existsSync(path.join(item.procRoot, "4242")), true);
+  assert.doesNotMatch(readCalls(item), /^kill /m);
+});
+
+fixtureTest("a successful post-start hook cannot conceal a changed host daemon", (item) => {
+  installWorkloadProfile(item, { source: `#!/bin/sh
+/bin/rm -rf ${shellQuote(path.join(item.procRoot, "4242"))}
+/bin/rm -f ${shellQuote(path.join(item.state, "docker-info"))} ${shellQuote(path.join(item.runRoot, "docker.pid"))}
+exit 0
+` });
+  const result = runHostctl(item, "start");
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /daemon identity changed during the workload post-start hook/);
+  assert.doesNotMatch(readCalls(item), /^kill /m);
+});
+
+fixtureTest("pre-stop can park managed containers before the zero-container gate", (item) => {
+  setManagedDaemon(item);
+  setContainers(item, ["a".repeat(12)]);
+  installWorkloadProfile(item, { source: `#!/bin/sh
+[ "$#" -eq 1 ] && [ "$1" = pre-stop ] || exit 74
+[ -f ${shellQuote(path.join(item.runRoot, "host-lifecycle.lock", "pid"))} ] || exit 75
+printf 'workload-hook pre-stop lock=held\n' >> ${shellQuote(item.calls)}
+: > ${shellQuote(path.join(item.state, "containers"))}
+` });
+  const result = runHostctl(item, "stop");
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "result=stopped\n");
+  const calls = readCalls(item);
+  assert.ok(calls.indexOf("workload-hook pre-stop") < calls.indexOf("docker ps -q"));
+  assert.ok(calls.indexOf("docker ps -q") < calls.indexOf("kill -TERM"));
+});
+
+fixtureTest("a pre-stop hook failure sends no signal and skips container inventory", (item) => {
+  setManagedDaemon(item);
+  setContainers(item, ["a".repeat(12)]);
+  installWorkloadProfile(item, { source: "#!/bin/sh\nexit 76\n" });
+  const result = runHostctl(item, "stop");
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /fixture\.profile pre-stop hook failed \(status=76\)/);
+  assert.doesNotMatch(readCalls(item), /^docker ps -q$|^kill /m);
+  assert.equal(fs.existsSync(path.join(item.procRoot, "4242")), true);
+});
+
+fixtureTest("a TERM-resistant timed-out pre-stop hook is KILL-bounded before inventory or daemon TERM", (item) => {
+  setManagedDaemon(item);
+  fs.writeFileSync(path.join(item.state, "force-hook-timeout"), "1\n");
+  installWorkloadProfile(item, { source: `#!/bin/sh
+trap '' TERM
+: > ${shellQuote(path.join(item.state, "hook-timeout-ready"))}
+while :; do :; done
+` });
+  const result = runHostctl(item, "stop");
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /pre-stop hook failed \(status=137\)/);
+  assert.equal(fs.existsSync(path.join(item.state, "hook-survived-term")), true);
+  assert.doesNotMatch(readCalls(item), /^docker ps -q$|^kill /m);
+  assert.equal(fs.existsSync(path.join(item.procRoot, "4242")), true);
+});
+
+for (const [label, hookBody] of [
+  ["removes the lifecycle lock", (item) => `/bin/rm -f ${shellQuote(path.join(item.runRoot, "host-lifecycle.lock", "pid"))}
+/bin/rmdir ${shellQuote(path.join(item.runRoot, "host-lifecycle.lock"))}
+`],
+  ["replaces the lifecycle owner", (item) => `/bin/rm -f ${shellQuote(path.join(item.runRoot, "host-lifecycle.lock", "pid"))}
+printf '999999\\n' > ${shellQuote(path.join(item.runRoot, "host-lifecycle.lock", "pid"))}
+/bin/chmod 0600 ${shellQuote(path.join(item.runRoot, "host-lifecycle.lock", "pid"))}
+`],
+]) {
+  fixtureTest(`a successful pre-stop hook that ${label} cannot reach inventory or TERM`, (item) => {
+    setManagedDaemon(item);
+    installWorkloadProfile(item, { source: `#!/bin/sh
+${hookBody(item)}exit 0
+` });
+    const result = runHostctl(item, "stop");
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /lifecycle lock (?:ownership|identity) changed during the workload hook/);
+    assert.doesNotMatch(readCalls(item), /^docker ps -q$|^kill /m);
+    assert.equal(fs.existsSync(path.join(item.procRoot, "4242")), true);
+  });
+}
+
+for (const [label, mutate] of [
+  ["unsafe ID", (item) => fs.writeFileSync(
+    item.workloadProfileFile,
+    fs.readFileSync(item.workloadProfileFile, "utf8").replace("PROFILE_ID=fixture.profile", "PROFILE_ID=../outside"),
+  )],
+  ["descriptor extension", (item) => fs.appendFileSync(item.workloadProfileFile, "HOOK_PATH=/tmp/other\n")],
+  ["missing final LF", (item) => fs.writeFileSync(
+    item.workloadProfileFile,
+    fs.readFileSync(item.workloadProfileFile, "utf8").replace(/\n$/, ""),
+  )],
+  ["hook hash mismatch", (_item, profile) => fs.appendFileSync(profile.hook, "# changed\n")],
+  ["hook mode mismatch", (_item, profile) => fs.chmodSync(profile.hook, 0o755)],
+  ["unexpected selected-profile member", (_item, profile) => fs.writeFileSync(path.join(profile.profileDir, "extra"), "x\n")],
+]) {
+  fixtureTest(`a workload profile ${label} fails closed before host mutation`, (item) => {
+    const profile = installWorkloadProfile(item);
+    mutate(item, profile);
+    const result = runHostctl(item, "start");
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /configured workload profile is malformed, tampered, or unsafe/);
+    assert.doesNotMatch(readCalls(item), /^(?:mount|iptables .* -I|setsid|dockerd\.sh|workload-hook) /m);
+    assert.equal(fs.existsSync(path.join(item.procRoot, "4242")), false);
+  });
+}
 
 fixtureTest("hostctl is root-only", (item) => {
   const result = runHostctlAs(item, 2000, "status");

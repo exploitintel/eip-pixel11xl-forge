@@ -1,6 +1,6 @@
 # Qualification module lifecycle
 
-The tracked `module/` tree is the installable `0.1.0-rc.1` KernelSU-Next
+The tracked `module/` tree is the installable `0.1.0-rc.2` KernelSU-Next
 qualification source. It supports only Pixel 11 Pro XL `kodiak` build
 `CD1A.260714.001.A9`, KernelSU-Next 3.3.0 in LKM mode, and Wi-Fi through
 `wlan0`. Cellular and automatic transport switching are deferred.
@@ -47,7 +47,7 @@ alone may use the package-pinned HTTPS origin through a qualified
 6. One locked `stage-install` transaction persists the candidate under
    `/data/docker/kernel/CD1A.260714.001.A9/Image.lz4`, installs the clean-host
    default config when no config exists, publishes the immutable runtime under
-   `/data/docker/releases/0.1.0-rc.1`, and selects it through the relative
+   `/data/docker/releases/0.1.0-rc.2`, and selects it through the relative
    `/data/docker/bin` symlink.
 
 Hashes bind every handoff between these steps. An invalid higher-priority
@@ -182,12 +182,85 @@ monitor and no cellular fallback.
 `hostctl stop` is idempotent for a proved stopped daemon. A running daemon is
 stopped only when its executable, stable `argv[0]`, PID file, socket, API, and
 container inventory all match the active release and the running-container
-count is exactly zero. It sends one `TERM`, waits for dockerd and containerd to
-disappear, and removes only a proved-stale PID file.
+count is exactly zero. If an external workload profile is active, its
+`pre-stop` phase runs before that inventory check. The daemon identity is
+re-proved after the phase. The host then sends one `TERM`, waits for dockerd and
+containerd to disappear, and removes only a proved-stale PID file.
 
 It does not stop a foreign or ambiguous process, stop running containers,
 force-kill, unmount storage, remove Wi-Fi policy, or delete data. Park or stop
 containers through their owning workflow before stopping the host.
+
+## Optional workload profile
+
+The public module does not install, update, or remove an application workload.
+It provides one optional integration seam so a separately provisioned,
+root-owned workload can converge after Docker is ready and park its own
+containers before the host's zero-container stop gate.
+
+Activation grants the selected hook root execution during host lifecycle
+operations. The descriptor hash detects substitution relative to the
+root-provisioned descriptor; it does not authenticate the hook's publisher.
+The external provisioner remains responsible for authenticating those bytes
+before activation.
+
+The activation descriptor has the fixed path
+`/data/docker/config/workload-profile.conf`, is a root-owned regular file with
+mode `0600`, and contains exactly these four ordered lines:
+
+```text
+WORKLOAD_PROFILE_VERSION=1
+PROFILE_ID=PROFILE_ID
+HOOK_SIZE=DECIMAL_BYTES
+HOOK_SHA256=LOWERCASE_SHA256
+```
+
+`PROFILE_ID` is 1 through 64 lowercase ASCII characters, begins with an ASCII
+letter or digit, and otherwise contains only letters, digits, dot, underscore,
+or hyphen. The descriptor cannot provide a path or command. The selected hook
+is always `/data/docker/workload-profiles/PROFILE_ID/hook`.
+
+The config directory, workload-profile root, and selected profile directory
+must be real root-owned directories with mode `0700`. The selected directory
+contains exactly one member named `hook`. That member must be a real,
+root-owned executable regular file with mode `0700`, and its size and SHA-256
+must match the descriptor. A missing descriptor means no profile and preserves
+the original host-only behavior. A dangling link, malformed descriptor,
+unexpected selected-profile member, wrong owner or mode, unavailable identity
+tool, or mismatched hook identity refuses the affected start or running-daemon
+stop operation.
+
+`hostctl` invokes the selected hook directly with exactly one argument and no
+stdin. It clears the ambient environment and supplies only `PATH=/system/bin`,
+the fixed Unix-socket `DOCKER_HOST`, and `WORKLOAD_PROFILE_ID`. The two allowed
+arguments are:
+
+- `post-start`, after the authenticated daemon and complete host policy are
+  ready, on both initial and repeated Start; and
+- `pre-stop`, before container inventory is measured for Stop.
+
+Hook standard output is routed to hostctl's standard error so the hostctl
+result channel stays machine-readable. Hooks must not print credentials or
+other sensitive configuration.
+
+Both phases run synchronously while `/data/docker/run/host-lifecycle.lock` is
+held. Hostctl sends TERM after 240 seconds and, if the hook is still running,
+KILL after a fixed 5-second grace. A timeout is a visible hook failure and never
+permits the next lifecycle action. Hostctl captures the physical lock-directory
+and owner-file identities before invoking a hook and re-proves those same
+root-owned objects, exact owner record, and modes immediately afterward. A hook
+cannot release or replace the lock and still reach a post-hook lifecycle action.
+Provisioners must use the same lock when publishing or removing a profile,
+publish the complete verified hook before atomically publishing the descriptor,
+and remove the descriptor before retiring the hook. Hooks must be idempotent,
+must not recursively call `hostctl`, and must not stop or replace the host
+daemon. A nonzero `post-start` result makes Start fail visibly but leaves the
+already-ready daemon running. A nonzero `pre-stop` result makes Stop fail
+without inventory, `TERM`, or force cleanup. After either successful phase,
+hostctl re-proves the same daemon identity; Stop then still requires an exact
+zero running-container count. The
+12-field status schema is unchanged and intentionally reports host state only;
+workload-specific status belongs to the profile owner.
 
 ## Module Action
 
@@ -280,7 +353,8 @@ start it also requires:
 A failed gate does not start Docker. Capability or identity refusals are
 appended to `/data/docker/hostctl.log` when possible. A successful dispatch
 runs the same convergent `hostctl start` path used by the Action, including the
-Wi-Fi policy checks. It never guesses a different interface.
+Wi-Fi policy checks and an active profile's `post-start` phase. It never
+guesses a different interface.
 
 ## Release transaction and retries
 
@@ -321,7 +395,7 @@ Before inspecting the kernel or host, the hook atomically publishes or exactly
 validates this standalone, root-owned recovery kit:
 
 ```text
-/data/docker/recovery/0.1.0-rc.1/
+/data/docker/recovery/0.1.0-rc.2/
   bin/kernelctl
   bin/install-preflight
   bin/swap-boot-kernel
@@ -345,9 +419,9 @@ status preserved those source files.
 The persistent recovery commands are:
 
 ```text
-KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.1/bin/kernelctl status
-KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.1/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_a
-KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.1/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_b
+KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.2/bin/kernelctl status
+KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.2/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_a
+KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.2/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_b
 ```
 
 Use only the restore line matching the freshly reported active suffix. If the
@@ -363,7 +437,7 @@ acknowledgment, changed active link, or status 3 preserves the active link and
 prints the direct versioned stop command, for example:
 
 ```text
-/data/docker/releases/0.1.0-rc.1/hostctl stop
+/data/docker/releases/0.1.0-rc.2/hostctl stop
 ```
 
 Only a stock or predecessor kernel plus exact `result=stopped` and an unchanged
@@ -379,7 +453,8 @@ Manager uninstall preserves:
 - every immutable release;
 - downloaded inputs;
 - staged kernels;
-- boot backups and metadata; and
+- boot backups and metadata;
+- any externally provisioned workload profile and activation descriptor; and
 - the standalone versioned recovery kit and diagnostic material.
 
 It does not force-stop containers, unmount storage, erase data, remove the
