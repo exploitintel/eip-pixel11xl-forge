@@ -44,6 +44,7 @@ export function createHostctlFixture() {
   const loopState = path.join(state, "loop-state");
   const fsckState = path.join(state, "fsck-state");
   const freeKib = path.join(state, "free-kib");
+  const diskSize = path.join(state, "disk-size");
   const disk = path.join(dockerRoot, "disk.img");
   const data = path.join(dockerRoot, "lib");
   const loopDevice = "/dev/block/loop7";
@@ -81,6 +82,7 @@ export function createHostctlFixture() {
   fs.writeFileSync(loopState, "ready\n");
   fs.writeFileSync(fsckState, "clean\n");
   fs.writeFileSync(freeKib, "2097152\n");
+  fs.writeFileSync(diskSize, "268435456\n");
 
   writeExecutable(path.join(release, "docker"), `#!/bin/sh
 STATE=${shellQuote(state)}
@@ -132,7 +134,7 @@ rm -f ${shellQuote(path.join(state, "docker-info"))} ${shellQuote(path.join(runR
   writeExecutable(path.join(systemBin, "stat"), `#!/bin/sh
 [ "$#" -eq 3 ] && [ "$1" = -c ] || exit 2
 case "$2:$3" in
-  %s:${shellQuote(dockerRoot)}/*disk.img*) printf '268435456\n'; exit 0 ;;
+  %s:${shellQuote(dockerRoot)}/*disk.img*) cat ${shellQuote(diskSize)}; exit 0 ;;
 esac
 case "$2" in
   %s) exec /usr/bin/stat -f %z "$3" ;;
@@ -155,7 +157,9 @@ exec ${shellQuote(process.execPath)} -e ${shellQuote(fixtureSha256)} "$1"
 `);
   writeExecutable(path.join(systemBin, "truncate"), `#!/bin/sh
 printf 'truncate %s\n' "$*" >> ${shellQuote(calls)}
-[ "$#" -eq 3 ] && [ "$1" = -s ] && [ "$2" = 268435456 ] || exit 2
+[ "$#" -eq 3 ] && [ "$1" = -s ] || exit 2
+case "$2" in ''|*[!0-9]*) exit 2 ;; esac
+printf '%s\n' "$2" > ${shellQuote(diskSize)}
 : > "$3"
 `);
   writeExecutable(path.join(systemBin, "ln"), "#!/bin/sh\nexec /bin/ln \"$@\"\n");
@@ -295,6 +299,7 @@ fi
     loopState,
     fsckState,
     freeKib,
+    diskSize,
     loopDevice,
     procRoot,
     state,

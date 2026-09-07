@@ -642,9 +642,14 @@ validate_disk_size() {
     ''|0*|*[!0-9]*) return 1 ;;
   esac
   [ "${#VALIDATE_SIZE}" -le 13 ] || return 1
-  [ "$VALIDATE_SIZE" -ge "$DISK_MIN_BYTES" ] 2>/dev/null || return 1
-  [ "$VALIDATE_SIZE" -le "$DISK_MAX_BYTES" ] 2>/dev/null || return 1
-  [ $((VALIDATE_SIZE % 4096)) -eq 0 ] || return 1
+  "$SYSTEM_BIN/awk" \
+    -v size="$VALIDATE_SIZE" \
+    -v minimum="$DISK_MIN_BYTES" \
+    -v maximum="$DISK_MAX_BYTES" '
+      BEGIN {
+        exit !(size >= minimum && size <= maximum && (size % 4096) == 0)
+      }
+    ' </dev/null
 }
 
 validate_bridge_pool_cidr() {
@@ -904,9 +909,15 @@ check_disk_free_space() {
   ') || die 'cannot determine free space for Docker disk initialization'
   case "$AVAILABLE_KIB" in ''|*[!0-9]*) die 'cannot determine free space for Docker disk initialization' ;; esac
   [ "${#AVAILABLE_KIB}" -le 16 ] || die 'reported free space is outside the supported range'
-  AVAILABLE_BYTES=$((AVAILABLE_KIB * 1024))
-  REQUIRED_BYTES=$((DISK_SIZE_BYTES + DISK_FREE_MARGIN_BYTES))
-  [ "$AVAILABLE_BYTES" -ge "$REQUIRED_BYTES" ] \
+  REQUIRED_BYTES=$("$SYSTEM_BIN/awk" \
+    -v size="$DISK_SIZE_BYTES" \
+    -v margin="$DISK_FREE_MARGIN_BYTES" \
+    'BEGIN { printf "%.0f\n", size + margin }' </dev/null) \
+    || die 'cannot calculate required free space for Docker disk initialization'
+  "$SYSTEM_BIN/awk" \
+    -v available_kib="$AVAILABLE_KIB" \
+    -v required="$REQUIRED_BYTES" \
+    'BEGIN { exit !((available_kib * 1024) >= required) }' </dev/null \
     || die "insufficient free space: need $REQUIRED_BYTES bytes including safety margin"
 }
 

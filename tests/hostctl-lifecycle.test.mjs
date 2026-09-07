@@ -763,6 +763,48 @@ fixtureTest("disk-init explicitly configures, creates, checks, and mounts one sp
   assert.doesNotMatch(calls, /setsid|dockerd\.sh/);
 });
 
+test("large disk gates avoid Android mksh integer arithmetic", () => {
+  assert.doesNotMatch(hostctlSource, /\[ "\$VALIDATE_SIZE" -(?:ge|le)/);
+  assert.doesNotMatch(hostctlSource, /\$\(\(VALIDATE_SIZE % 4096\)\)/);
+  assert.doesNotMatch(hostctlSource, /AVAILABLE_BYTES=\$\(\(AVAILABLE_KIB \* 1024\)\)/);
+  assert.doesNotMatch(hostctlSource, /REQUIRED_BYTES=\$\(\(DISK_SIZE_BYTES \+ DISK_FREE_MARGIN_BYTES\)\)/);
+  assert.match(hostctlSource, /exit !\(size >= minimum && size <= maximum && \(size % 4096\) == 0\)/);
+  assert.match(hostctlSource, /exit !\(\(available_kib \* 1024\) >= required\)/);
+});
+
+fixtureTest("disk-init binds an existing 64 GiB image without recreating it", (item) => {
+  writeHostConfig(item, { size: 0 });
+  fs.writeFileSync(item.diskSize, "68719476736\n");
+
+  const result = runHostctl(item, "disk-init", "--size-bytes", "68719476736");
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "result=disk-ready\n");
+  assert.match(fs.readFileSync(item.configFile, "utf8"), /^DISK_SIZE_BYTES=68719476736$/m);
+  assert.doesNotMatch(readCalls(item), /^(?:truncate|mke2fs) /m);
+});
+
+fixtureTest("disk-init creates a 64 GiB image when free space is sufficient", (item) => {
+  clearPreparedStorage(item);
+  writeHostConfig(item, { size: 0 });
+  fs.writeFileSync(item.freeKib, "100000000\n");
+
+  const result = runHostctl(item, "disk-init", "--size-bytes", "68719476736");
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "result=disk-ready\n");
+  assert.match(readCalls(item), /^truncate -s 68719476736 /m);
+});
+
+fixtureTest("disk-init refuses a 64 GiB image when free space is insufficient", (item) => {
+  clearPreparedStorage(item);
+  writeHostConfig(item, { size: 0 });
+  fs.writeFileSync(item.freeKib, "1048576\n");
+
+  const result = runHostctl(item, "disk-init", "--size-bytes", "68719476736");
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /insufficient free space/);
+  assert.doesNotMatch(readCalls(item), /^(?:truncate|mke2fs) /m);
+});
+
 for (const invalidSize of ["64G", "268435455", "268435457", "01073741824", "1099511631872"]) {
   fixtureTest(`disk-init rejects invalid explicit size ${invalidSize}`, (item) => {
     clearPreparedStorage(item);

@@ -92,6 +92,10 @@ bridge pool must be an aligned private IPv4 CIDR between `/12` and `/24`; the
 default and qualified value is `172.17.0.0/16`. The ext4 feature and mount
 option lines are fixed for v0.1.
 
+Disk-size bounds, alignment, and free-space calculations use the system awk.
+This keeps supported multi-GiB byte values outside Android mksh's signed shell
+arithmetic while preserving the exact decimal configuration value.
+
 A missing file defaults to autostart off. The two-line version 1 form is read
 as legacy. An autostart-only change can retain that legacy form, while an
 explicit disk configuration upgrades it to version 2. A symlink, malformed
