@@ -1,6 +1,6 @@
 # Release and trust policy
 
-The public `v0.1.0-rc.3` installer is a manually published, unsigned
+The public `v0.1.0-rc.4` installer is a manually published, unsigned
 prerelease for qualification. Its release asset is the supported public
 installer path, but it is not a signed or stable release. The current
 kernel-candidate and qualification-module workflows do not publish GitHub
