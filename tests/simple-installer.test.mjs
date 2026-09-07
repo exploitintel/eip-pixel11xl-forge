@@ -24,6 +24,43 @@ async function fakeToolMain() {
     await new Promise((resolve) => setTimeout(resolve, args[0] === "15" ? 35 : 0));
     return;
   }
+  if (tool === "shasum") {
+    const file = args.at(-1);
+    const hashes = new Map([
+      ["stock-boot.img", "5fc827ab5adfaf81f84cd7b1ab8675684e5588aaff832e9ba45051a72d0b06a2"],
+      ["ksu-init-boot.img", "bd471feb086b8bd0466dd2c1ec52598fbaa4a97c4bde7d58f7b0f051f02e553f"],
+      ["ksu-manager.apk", "fd0b12385c98fe9d5f4f1257b5f184e55c74c1376637507df0718305f5d7a924"],
+    ]);
+    const name = [...hashes.keys()].find((candidate) => file?.endsWith(`/${candidate}`));
+    if (!name || args.slice(0, -1).join(" ") !== "-a 256 --") reject();
+    const hash = env.FAKE_BAD_PAYLOAD === name ? "0".repeat(64) : hashes.get(name);
+    log({ tool, file, hash });
+    process.stdout.write(`${hash}  ${file}\n`);
+    return;
+  }
+  if (tool === "unzip") {
+    if (args.length !== 3 || args[0] !== "-p"
+        || !args[1].endsWith("/payload/ksu-manager.apk")
+        || !args[2].startsWith("lib/arm64-v8a/")) reject();
+    log({ tool, args });
+    process.stdout.write("inert fixture member\n");
+    return;
+  }
+  if (tool === "fastboot") {
+    log({ tool, args });
+    if (args.length === 1 && args[0] === "devices") {
+      process.stdout.write("TEST-SERIAL\tfastboot\n");
+      return;
+    }
+    const command = args.slice(2).join(" ");
+    if (args[0] === "-s" && args[1] === "TEST-SERIAL" && command === "getvar product") {
+      process.stderr.write(`product: ${env.FAKE_FASTBOOT_PRODUCT}\n`);
+      return;
+    }
+    if (args[0] === "-s" && args[1] === "TEST-SERIAL"
+        && (command === "-w" || command === "reboot")) return;
+    reject();
+  }
   if (tool !== "adb" || args[0] !== "-s" || args[1] !== "TEST-SERIAL") reject();
   const [, , verb, ...rest] = args;
   let command = rest.join(" ");
@@ -58,10 +95,27 @@ async function fakeToolMain() {
     }
     return;
   }
+  if (verb === "pull" && rest.length === 2
+      && rest[0] === "/data/local/tmp/eip-ksu-shell-root.img") {
+    fs.writeFileSync(rest[1], Buffer.alloc(Number(env.FAKE_SHELL_ROOT_SIZE)));
+    return;
+  }
+  if (verb === "reboot" && rest.length === 1 && rest[0] === "bootloader") return;
   if (verb === "install" && rest.length === 2 && rest[0] === "-r"
       && rest[1].endsWith("/payload/forge-control.apk")) return;
   if (verb !== "shell") reject();
+  const properties = new Map([
+    ["getprop ro.product.device", env.FAKE_DEVICE],
+    ["getprop ro.build.fingerprint", env.FAKE_FINGERPRINT],
+    ["getprop ro.build.version.release", env.FAKE_ANDROID_VERSION],
+    ["getprop ro.build.version.security_patch", env.FAKE_SECURITY_PATCH],
+  ]);
+  if (properties.has(command)) {
+    process.stdout.write(`${properties.get(command)}\n`);
+    return;
+  }
   if (command === "su -c 'id -u'") {
+    if (env.FAKE_ROOT_AVAILABLE === "0") process.exit(1);
     process.stdout.write("0\n");
     return;
   }
@@ -92,17 +146,24 @@ async function fakeToolMain() {
     process.exit(1);
   }
   const docker = "DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker";
-  const image = `sha256:${"a".repeat(64)}`;
+  const image = env.FAKE_LOADED_CONTROLLER_ID;
+  const loadedSource = env.FAKE_LOAD_REPORT === "tag" ? "eip-cve-controller:phone" : image;
   if (command === `${docker} image inspect --format '{{.Id}}' eip-cve-controller:local`) {
     if (env.FAKE_LOAD_IMAGE === "1") process.exit(1);
     process.stdout.write(`${env.FAKE_EXISTING_CONTROLLER_ID}\n`);
     return;
   }
   if (command === `${docker} load -i /data/local/tmp/eip-simple-controller.tar`) {
-    process.stdout.write(`fixture layer output\nLoaded image ID: ${image}\n`);
+    process.stdout.write(env.FAKE_LOAD_REPORT === "tag"
+      ? `fixture layer output\nLoaded image: ${loadedSource}\n`
+      : `fixture layer output\nLoaded image ID: ${loadedSource}\n`);
     return;
   }
-  if (command === `${docker} tag ${image} eip-cve-controller:local`
+  if (command === `${docker} image inspect --format '{{.Id}}' ${loadedSource}`) {
+    process.stdout.write(`${image}\n`);
+    return;
+  }
+  if (command === `${docker} tag ${loadedSource} eip-cve-controller:local`
       || command === "rm -f /data/local/tmp/eip-simple-controller.tar") return;
   if (command === "/data/eip-cve-ops/eip-hostctl.sh logs") {
     process.stdout.write("fixture readiness log\n");
@@ -131,6 +192,8 @@ async function fakeToolMain() {
     "am start -n com.exploitintel.forgecontrol/.MainActivity >/dev/null",
     "pm grant com.exploitintel.forgecontrol android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 || true",
     "DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker info >/dev/null 2>&1",
+    "chmod 700 /data/local/tmp/eip-ksud",
+    "rm -f /data/local/tmp/eip-ksud /data/local/tmp/eip-ksu-init-boot.img /data/local/tmp/eip-ksu-shell-root.img",
   ]);
   const prefixes = [
     "sed -i 's/^DISK_SIZE_BYTES=", "mkdir -p /data/docker/lib /data/docker/run;",
@@ -139,6 +202,7 @@ async function fakeToolMain() {
     "DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker pull tonistiigi/binfmt@sha256:",
     "rm -rf /data/eip-cve-src /data/eip-cve-ops;",
     "chmod 700 /data/local/tmp/eip-ksu-grant-profile;",
+    "/data/local/tmp/eip-ksud boot-patch --boot /data/local/tmp/eip-ksu-init-boot.img ",
   ];
   if (!exact.has(command) && !prefixes.some((prefix) => command.startsWith(prefix))) reject();
 }
@@ -162,7 +226,7 @@ function fixture(t) {
   fs.copyFileSync(installer, script);
   const mock = path.join(root, "fake-tool.mjs");
   fs.writeFileSync(mock, `(${fakeToolMain.toString()})();\n`);
-  for (const tool of ["adb", "fastboot", "sleep", "docker", "curl", "wget", "ssh"]) {
+  for (const tool of ["adb", "fastboot", "sleep", "shasum", "unzip", "docker", "curl", "wget", "ssh"]) {
     fs.writeFileSync(path.join(bin, tool),
       `#!/bin/bash\nexec ${quote(process.execPath)} ${quote(mock)} ${quote(tool)} "$@"\n`,
       { mode: 0o755 });
@@ -184,6 +248,16 @@ function fixture(t) {
     FAKE_STARTED: path.join(root, "started"), FAKE_STATUS_MODE: "ready", FAKE_LOAD_IMAGE: "0",
     FAKE_FORGE_STATE_EXISTS: "1",
     FAKE_EXISTING_CONTROLLER_ID: controllerConfig,
+    FAKE_LOADED_CONTROLLER_ID: controllerConfig,
+    FAKE_LOAD_REPORT: "id",
+    FAKE_BAD_PAYLOAD: "",
+    FAKE_ROOT_AVAILABLE: "1",
+    FAKE_SHELL_ROOT_SIZE: "8388608",
+    FAKE_DEVICE: "kodiak",
+    FAKE_FASTBOOT_PRODUCT: "kodiak",
+    FAKE_FINGERPRINT: "google/kodiak/kodiak:17/CD1A.260714.001.A9/15938155:user/release-keys",
+    FAKE_ANDROID_VERSION: "17",
+    FAKE_SECURITY_PATCH: "2026-08-05",
   };
   const calls = () => fs.readFileSync(callsFile, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse);
   const run = (args = [], overrides = {}) => spawnSync("/bin/bash",
@@ -216,7 +290,34 @@ test("installer replaces a stale existing controller image", (t) => {
   assert.ok(commands.includes("DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker "
     + "load -i /data/local/tmp/eip-simple-controller.tar"));
   assert.ok(commands.includes("DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker "
-    + `tag sha256:${"a".repeat(64)} eip-cve-controller:local`));
+    + `tag sha256:${"d".repeat(64)} eip-cve-controller:local`));
+});
+
+test("installer refuses a controller archive with the wrong loaded image ID", (t) => {
+  const item = fixture(t);
+  const result = item.run([], {
+    FAKE_EXISTING_CONTROLLER_ID: `sha256:${"c".repeat(64)}`,
+    FAKE_LOADED_CONTROLLER_ID: `sha256:${"a".repeat(64)}`,
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /controller\.tar loaded the wrong image ID/);
+  const commands = item.calls().map((call) => call.command).filter(Boolean);
+  assert.ok(!commands.some((command) => command.includes("docker tag")));
+  expectNoCompletion(result, item.calls());
+});
+
+test("installer verifies the tagged image form emitted by the release controller archive", (t) => {
+  const item = fixture(t);
+  const result = item.run([], {
+    FAKE_EXISTING_CONTROLLER_ID: `sha256:${"c".repeat(64)}`,
+    FAKE_LOAD_REPORT: "tag",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const commands = item.calls().map((call) => call.command).filter(Boolean);
+  assert.ok(commands.includes("DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker "
+    + "image inspect --format '{{.Id}}' eip-cve-controller:phone"));
+  assert.ok(commands.includes("DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker "
+    + "tag eip-cve-controller:phone eip-cve-controller:local"));
 });
 
 async function runUntilHeartbeat(item, overrides, heartbeat) {
@@ -276,6 +377,82 @@ test("installer rejects missing option values before any device call", (t) => {
       assert.deepEqual(item.calls(), [], "invalid arguments must fail before adb or progress begins");
     }
   }
+});
+
+test("wipe verifies the exact Android target before erasing data", (t) => {
+  const item = fixture(t);
+  const result = item.run(["--wipe"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^WIPE COMPLETE$/m);
+  assert.doesNotMatch(result.stdout, /^READY$/m);
+  const calls = item.calls();
+  const reboot = calls.findIndex((call) => call.tool === "adb" && call.verb === "reboot");
+  const wipe = calls.findIndex((call) => call.tool === "fastboot" && call.args.at(-1) === "-w");
+  const product = calls.findIndex((call) => call.tool === "fastboot"
+    && call.args.slice(2).join(" ") === "getvar product");
+  const fastbootReboot = calls.findIndex((call) => call.tool === "fastboot"
+    && call.args.at(-1) === "reboot");
+  const identity = calls.filter((call) => call.tool === "adb"
+    && call.command?.startsWith("getprop "));
+  assert.equal(identity.length, 4);
+  assert.ok(reboot > calls.indexOf(identity.at(-1))
+    && product > reboot && wipe > product && fastbootReboot > wipe);
+});
+
+test("wipe refuses a different fastboot product before erasing data", (t) => {
+  const item = fixture(t);
+  const result = item.run(["--wipe"], { FAKE_FASTBOOT_PRODUCT: "husky" });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /unsupported fastboot product: husky/);
+  assert.ok(!item.calls().some((call) => call.tool === "fastboot" && call.args.at(-1) === "-w"));
+});
+
+test("wipe and install reject unsupported Android targets before a bootloader action", (t) => {
+  const mismatches = [
+    ["device", { FAKE_DEVICE: "husky" }, /unsupported device/i],
+    ["build", { FAKE_FINGERPRINT: "google/kodiak/kodiak:17/WRONG/1:user/release-keys" }, /unsupported Android build/i],
+    ["Android version", { FAKE_ANDROID_VERSION: "16" }, /unsupported Android version/i],
+    ["security patch", { FAKE_SECURITY_PATCH: "2026-07-05" }, /unsupported security patch/i],
+  ];
+  for (const mode of ["wipe", "install"]) {
+    for (const [label, overrides, message] of mismatches) {
+      const item = fixture(t);
+      const result = item.run(mode === "wipe" ? ["--wipe"] : [], overrides);
+      assert.equal(result.status, 1, `${mode} ${label}: ${result.stderr}`);
+      assert.match(result.stderr, message);
+      const calls = item.calls();
+      assert.ok(!calls.some((call) => call.tool === "fastboot"), `${mode} ${label}: fastboot called`);
+      assert.ok(!calls.some((call) => call.tool === "adb" && call.verb === "reboot"),
+        `${mode} ${label}: phone rebooted`);
+      assert.ok(!calls.some((call) => call.tool === "adb" && call.verb === "push"),
+        `${mode} ${label}: payload pushed`);
+    }
+  }
+});
+
+test("installer rejects a changed bootstrap payload before contacting the phone", (t) => {
+  for (const [name, message] of [
+    ["stock-boot.img", /stock boot image has the wrong SHA-256/],
+    ["ksu-init-boot.img", /KernelSU init_boot image has the wrong SHA-256/],
+    ["ksu-manager.apk", /KernelSU Manager APK has the wrong SHA-256/],
+  ]) {
+    const item = fixture(t);
+    const result = item.run([], { FAKE_BAD_PAYLOAD: name });
+    assert.equal(result.status, 1, `${name}: ${result.stderr}`);
+    assert.match(result.stderr, message);
+    assert.ok(!item.calls().some((call) => call.tool === "adb" || call.tool === "fastboot"));
+  }
+});
+
+test("root bootstrap refuses a wrong-size generated init_boot before entering fastboot", (t) => {
+  const item = fixture(t);
+  const result = item.run([], { FAKE_ROOT_AVAILABLE: "0", FAKE_SHELL_ROOT_SIZE: "7" });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /KernelSU shell-root image has the wrong size/);
+  const calls = item.calls();
+  assert.ok(calls.some((call) => call.command?.startsWith("/data/local/tmp/eip-ksud boot-patch ")));
+  assert.ok(!calls.some((call) => call.tool === "fastboot"));
+  assert.ok(!calls.some((call) => call.tool === "adb" && call.verb === "reboot"));
 });
 
 for (const suppliedProviders of [false, true]) {
@@ -345,7 +522,7 @@ test("delayed image load keeps heartbeat out of captured output and tags the rep
   const loadIndex = commands.findIndex((command) => command.includes("docker load -i "));
   const cleanupIndex = commands.indexOf("rm -f /data/local/tmp/eip-simple-controller.tar");
   const tagIndex = commands.indexOf("DOCKER_HOST=unix:///data/docker/run/docker.sock "
-    + `/data/docker/bin/docker tag sha256:${"a".repeat(64)} eip-cve-controller:local`);
+    + `/data/docker/bin/docker tag sha256:${"d".repeat(64)} eip-cve-controller:local`);
   assert.ok(loadIndex >= 0 && cleanupIndex > loadIndex && tagIndex > cleanupIndex,
     "missing image must be loaded, its transfer cleaned, and its reported ID tagged in order");
   assert.ok(item.calls().some((call) => call.event === "delay-started"));

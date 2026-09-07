@@ -1,15 +1,15 @@
 # Release and trust policy
 
-The current kernel-candidate and qualification-module workflows do not create
-or publish a GitHub release. The module workflow retains only a
-commit-qualified, installable but unsigned qualification artifact for 14 days.
-It is not a public release. No release workflow exists yet. Remote
-environments, rulesets, immutable releases, and the offline release key require
-separate operator-controlled setup.
+The public `v0.1.0-rc.4` installer is a manually published, unsigned
+prerelease for qualification. Its release asset is the supported public
+installer path, but it is not a signed or stable release. The current
+kernel-candidate and qualification-module workflows do not publish GitHub
+releases; protected automated publication, repository rulesets, immutable
+releases, and an offline release key remain future work.
 
 ## Versions and immutable assets
 
-- Release tags use strict three-part SemVer, beginning with `v0.1.0`.
+- Prerelease tags use `v0.1.0-rc.N`; the first stable tag will be `v0.1.0`.
 - Module `versionCode` begins at 1 and strictly increases for every tagged
   candidate. A value is never reused.
 - Initial releases are prereleases. A second-device clean-room gate is required
@@ -17,7 +17,8 @@ separate operator-controlled setup.
 - Hotfixes receive a new patch version and higher `versionCode`. Published
   assets are never replaced in place.
 - A protected tag must peel to the signed full commit immediately before
-  publication. GitHub immutable releases must be enabled before v0.1.
+  publication. GitHub immutable releases must be enabled before the first
+  stable release.
 
 ## Canonical manifest
 
@@ -42,7 +43,7 @@ build compatibility.
 ## Offline minisign key
 
 The release private key never enters Git, GitHub Actions, or a device. Before
-v0.1, the operator creates it offline, stores two encrypted backups, commits
+the first signed release, the operator creates it offline, stores two encrypted backups, commits
 only the public key, and publishes the SHA-256 of the exact public-key file
 bytes through an independent operator-controlled channel.
 
