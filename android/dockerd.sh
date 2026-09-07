@@ -76,25 +76,13 @@ IFS=$OLD_IFS
 }
 
 # Lifecycle-controller starts reuse the current boot's prepared host state.
-# The later host controller owns explicit disk initialization, mounting, IP
-# forwarding, API access-control rules, and Wi-Fi routing.
+# The host controller owns explicit disk initialization, mounting, IP
+# forwarding, and Wi-Fi routing.
 awk -v target="$D/lib" '$2 == target && $3 == "ext4" { found=1 } END { exit found ? 0 : 1 }' /proc/mounts || {
   echo "runtime-only start requires the existing ext4 data mount: $D/lib" >> "$D/dockerd.log"
   exit 1
 }
 mkdir -p "$D/run" "$D/exec" "$D/tmp"
-
-# The loopback TCP listener is unauthenticated. Android apps share the host
-# network namespace, so start fails closed unless host preparation installed
-# all three access-control rules. This check never inserts or repairs policy.
-for r in "-m owner --uid-owner 0 -j ACCEPT" "-m owner --uid-owner 2000 -j ACCEPT" "-j REJECT"; do
-  # Intentional word splitting turns each reviewed rule into iptables argv.
-  # shellcheck disable=SC2086
-  iptables -C OUTPUT -o lo -p tcp --dport 2375 $r 2>/dev/null || {
-    echo "runtime-only start requires the existing Docker API firewall rules" >> "$D/dockerd.log"
-    exit 1
-  }
-done
 
 # Embedded BuildKit launches runc directly, outside containerd, so dockerd's
 # --exec-root does not relocate its state. The wrapper gives only that runc

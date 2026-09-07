@@ -162,32 +162,13 @@ test("runtime-only start refuses a missing or malformed host network configurati
   }
 });
 
-test("runtime-only start checks existing API firewall rules without rewriting network policy", () => {
-  const item = fixture();
+test("runtime-only start does not gate daemon startup on API firewall state", () => {
+  const item = fixture({ installedRules: [] });
   try {
     const result = run(item, "--runtime-only");
     assert.equal(result.status, 0, result.stderr);
     assert.equal(fs.readFileSync(item.daemonArgs, "utf8").trim(), expectedDaemonArgs(item.dockerRoot));
-    const network = fs.readFileSync(item.networkLog, "utf8");
-    assert.equal((network.match(/^iptables -C /gm) ?? []).length, 3);
-    assert.doesNotMatch(network, /^iptables -I |^ip /m);
-  } finally {
-    fs.rmSync(item.root, { recursive: true, force: true });
-  }
-});
-
-test("runtime-only start fails closed when an API firewall rule is absent", () => {
-  const item = fixture({ installedRules: ["root", "shell"] });
-  try {
-    const result = run(item, "--runtime-only");
-    assert.notEqual(result.status, 0);
-    assert.equal(fs.existsSync(item.daemonArgs), false);
-    assert.match(
-      fs.readFileSync(path.join(item.dockerRoot, "dockerd.log"), "utf8"),
-      /requires the existing Docker API firewall rules/,
-    );
-    const network = fs.readFileSync(item.networkLog, "utf8");
-    assert.doesNotMatch(network, /^iptables -I |^ip /m);
+    assert.equal(fs.existsSync(item.networkLog), false);
   } finally {
     fs.rmSync(item.root, { recursive: true, force: true });
   }

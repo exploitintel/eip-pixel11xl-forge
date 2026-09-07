@@ -118,6 +118,9 @@ The installed command is `/data/docker/bin/hostctl`. All mutations serialize
 through `/data/docker/run/host-lifecycle.lock`. Only a precisely shaped stale
 lock whose recorded PID no longer exists can be recovered.
 
+Android exposes `/proc/mounts` as a symlink to `/proc/self/mounts`; hostctl
+reads that standard kernel interface when checking the Docker data mount.
+
 `status` is read-only and prints these 12 ordered fields:
 
 ```text

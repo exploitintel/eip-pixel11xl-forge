@@ -980,6 +980,16 @@ fixtureTest("an unmounted clean existing image reuses its sole loop and mounts b
   assert.ok(calls.indexOf("mount -t ext4") < calls.indexOf("dockerd.sh --runtime-only"));
 });
 
+fixtureTest("Android proc mounts symlink is accepted", (item) => {
+  const mountTable = `${item.mounts}.target`;
+  fs.writeFileSync(mountTable, "");
+  fs.rmSync(item.mounts);
+  fs.symlinkSync(mountTable, item.mounts);
+  const result = runHostctl(item, "start");
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(readCalls(item), /^mount -t ext4 -o noatime,nodev /m);
+});
+
 fixtureTest("multiple loop associations refuse without mounting or launching", (item) => {
   fs.writeFileSync(item.mounts, "");
   fs.writeFileSync(item.loopState, "multiple\n");

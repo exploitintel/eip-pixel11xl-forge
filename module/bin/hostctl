@@ -826,7 +826,7 @@ resolve_disk_loops() {
 probe_mount() {
   MOUNT_STATE=unmounted
   MOUNT_SOURCE=
-  [ -f "$MOUNTS" ] && [ ! -L "$MOUNTS" ] || { MOUNT_STATE=unknown; return 1; }
+  [ -r "$MOUNTS" ] || { MOUNT_STATE=unknown; return 1; }
   MOUNT_PARSED=$("$SYSTEM_BIN/awk" -v target="$DOCKER_DATA" '
     $2 == target { count++; source = $1; type = $3; options = $4 }
     END {
