@@ -57,6 +57,11 @@ cache or sideload file causes refusal instead of fallback. Retry logic accepts
 only exact complete staged, recorded, or already-active states and refuses
 malformed remnants.
 
+Existing Docker root, run, and releases directories must be real, root-owned,
+owner-executable, and not writable by group or other. Their three octal mode
+digits are checked directly so Android `mksh` cannot reinterpret values such
+as `0755` as decimal arithmetic.
+
 Installation does not allocate `disk.img`, mount storage, start Docker,
 install Wi-Fi policy, write the boot partition, or reboot. A clean installation
 defaults to autostart off and a zero disk size. An existing root-owned regular

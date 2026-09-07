@@ -384,6 +384,8 @@ test("transaction source is inert, bounded, and uses the shared durability primi
   assert.match(source, /bb mv -T "\$STAGING_RELEASE" "\$FINAL_RELEASE"/);
   assert.match(source, /bb mv -fT "\$TEMP_LINK" "\$ACTIVE_LINK"/);
   assert.match(source, /bb fsync "\$1"/);
+  assert.match(source, /\[1357\]\[0145\]\[0145\]\) return 0/);
+  assert.doesNotMatch(source, /0\$SAFE_MODE\s*&/);
   assert.doesNotMatch(source, /\brm\s+-rf\b|curl|wget|swap-boot|patch-engine|disk\.img|boot_/i);
 });
 

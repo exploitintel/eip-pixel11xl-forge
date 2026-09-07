@@ -131,8 +131,10 @@ directory_is_safe_existing() {
   [ -d "$SAFE_DIRECTORY" ] && [ ! -L "$SAFE_DIRECTORY" ] || return 1
   [ "$(bb stat -c '%u:%g' "$SAFE_DIRECTORY" 2>/dev/null || true)" = 0:0 ] || return 1
   SAFE_MODE=$(bb stat -c '%a' "$SAFE_DIRECTORY" 2>/dev/null) || return 1
-  case "$SAFE_MODE" in ''|*[!0-7]*|?????*) return 1 ;; esac
-  [ $((0$SAFE_MODE & 0022)) -eq 0 ] && [ $((0$SAFE_MODE & 0100)) -ne 0 ]
+  case "$SAFE_MODE" in
+    [1357][0145][0145]) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 require_proc_root() {
