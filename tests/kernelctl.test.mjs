@@ -119,7 +119,7 @@ function makeFixture() {
     patch: "2026-08-05",
     kernel: kernelRelease,
     suffix: "_b",
-    slot: "1",
+    bootconfig: 'androidboot.hardware = "kodiak"\nandroidboot.slot_suffix = "_b"',
     available: "1000000",
   })) fs.writeFileSync(path.join(state, name), `${value}\n`);
 
@@ -223,10 +223,6 @@ case "\${1:-}" in
   *) exit 2 ;;
 esac
 `);
-  writeExecutable(path.join(systemBin, "bootctl"), `#!/bin/sh
-[ "$#" -eq 1 ] && [ "$1" = get-current-slot ] || exit 2
-exec /bin/cat ${shellQuote(path.join(state, "slot"))}
-`);
   writeExecutable(path.join(systemBin, "blockdev"), `#!/bin/sh
 [ "$#" -eq 2 ] && [ "$1" = --getsize64 ] || exit 2
 /usr/bin/wc -c < "$2" | /usr/bin/tr -d ' '
@@ -239,6 +235,7 @@ exec /bin/cat ${shellQuote(path.join(state, "slot"))}
     ["#!/system/bin/sh", "#!/bin/sh"],
     ["BUSYBOX=/data/adb/ksu/bin/busybox", `BUSYBOX=${shellQuote(busybox)}`],
     ["SYSTEM_BIN=/system/bin", `SYSTEM_BIN=${shellQuote(systemBin)}`],
+    ["BOOT_CONFIG=/proc/bootconfig", `BOOT_CONFIG=${shellQuote(path.join(state, "bootconfig"))}`],
     ["BOOT_DEVICE_ROOT=/dev/block/by-name", `BOOT_DEVICE_ROOT=${shellQuote(devices)}`],
     ['  [ -b "$1" ]', '  [ -f "$1" ]'],
   ]) preflight = replaceRequired(preflight, from, to);
@@ -348,7 +345,7 @@ test("install requires an exact build-and-active-slot confirmation", () => {
 });
 
 for (const [label, mutate, pattern] of [
-  ["wrong active-slot index", (item) => fs.writeFileSync(path.join(item.state, "slot"), "0\n"), /slot suffix and bootctl index disagree/],
+  ["wrong bootconfig slot", (item) => fs.writeFileSync(path.join(item.state, "bootconfig"), 'androidboot.slot_suffix = "_a"\n'), /slot suffix and bootconfig disagree/],
   ["wrong partition size", (item) => fs.truncateSync(item.boot, stockBoot.length - 1), /partition size does not match/],
   ["wrong partition identity", (item) => {
     const changed = Buffer.from(stockBoot);

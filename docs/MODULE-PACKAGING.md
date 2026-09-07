@@ -173,6 +173,12 @@ boot_state=ROLE
 installer_inputs_sha256=SHA256
 ```
 
+The active suffix is accepted only when `getprop ro.boot.slot_suffix` is
+exactly `_a` or `_b` and agrees with exactly one canonical
+`androidboot.slot_suffix = "_a|_b"` record in `/proc/bootconfig`. A missing,
+malformed, duplicate, or mismatched bootconfig record refuses preflight. The
+contract does not depend on an optional Android `bootctl` executable.
+
 The manager environment establishes the exact v3.3.0 LKM compatibility
 contract. The target remains KernelSU-Next; the environment variables alone
 cannot distinguish it from a manager that deliberately imitates the same

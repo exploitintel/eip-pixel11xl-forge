@@ -119,7 +119,7 @@ function makeFixture({ state = "stock" } = {}) {
     patch: "2026-08-05",
     kernel: kernelRelease,
     suffix: "_b",
-    slot: "1",
+    bootconfig: 'androidboot.hardware = "kodiak"\nandroidboot.slot_suffix = "_b"',
   })) fs.writeFileSync(path.join(stateDir, name), `${value}\n`);
 
   const fakeBusybox = path.join(root, "busybox");
@@ -189,11 +189,6 @@ case "\${1:-}" in
   *) exit 2 ;;
 esac
 `);
-  writeExecutable(path.join(systemBin, "bootctl"), `#!/bin/sh
-printf 'system:bootctl %s\n' "$*" >> ${shellQuote(calls)}
-[ "$#" -eq 1 ] && [ "$1" = get-current-slot ] || exit 2
-exec /bin/cat ${shellQuote(path.join(stateDir, "slot"))}
-`);
   writeExecutable(path.join(systemBin, "blockdev"), `#!/bin/sh
 printf 'system:blockdev %s\n' "$*" >> ${shellQuote(calls)}
 [ "$#" -eq 2 ] && [ "$1" = --getsize64 ] || exit 2
@@ -214,6 +209,7 @@ exec ${shellQuote(hostSwap)} "$@"
     ["#!/system/bin/sh", "#!/bin/sh"],
     ["BUSYBOX=/data/adb/ksu/bin/busybox", `BUSYBOX=${shellQuote(fakeBusybox)}`],
     ["SYSTEM_BIN=/system/bin", `SYSTEM_BIN=${shellQuote(systemBin)}`],
+    ["BOOT_CONFIG=/proc/bootconfig", `BOOT_CONFIG=${shellQuote(path.join(stateDir, "bootconfig"))}`],
     ["BOOT_DEVICE_ROOT=/dev/block/by-name", `BOOT_DEVICE_ROOT=${shellQuote(deviceRoot)}`],
     ['  [ -b "$1" ]', '  [ -f "$1" ]'],
   ]) {
@@ -310,6 +306,7 @@ test("preflight recognizes exact stock and current-public boot pairs without mut
       const calls = fs.readFileSync(item.calls, "utf8");
       assert.match(calls, /swap:--print-kernel-sha256 /);
       assert.doesNotMatch(calls, /curl|wget|mount|fsync|\bdd\b|busybox:(mkdir|chmod|chown|cp|mv|rm|ln)/);
+      assert.equal(calls.includes("system:bootctl"), false);
       assert.equal((calls.match(/^system:blockdev /gm) ?? []).length, 2);
       assert.equal((calls.match(/^busybox:sha256sum .*\/boot_b$/gm) ?? []).length, 2);
     } finally {
@@ -361,7 +358,7 @@ for (const [label, environment, stateName, stateValue, expected] of [
   ["leading-zero Android version", {}, "android", "017", /Android version has an invalid form/],
   ["wrong security patch", {}, "patch", "2026-09-05", /do not authorize this device/],
   ["wrong kernel", {}, "kernel", "6.12.69-other", /do not authorize this device/],
-  ["slot disagreement", {}, "slot", "0", /slot suffix and bootctl index disagree/],
+  ["bootconfig slot disagreement", {}, "bootconfig", 'androidboot.slot_suffix = "_a"', /active slot suffix and bootconfig disagree/],
 ]) {
   test(`preflight refuses ${label}`, () => {
     const item = makeFixture();
@@ -377,6 +374,28 @@ for (const [label, environment, stateName, stateValue, expected] of [
     }
   });
 }
+
+test("preflight requires one exact bootconfig slot record", () => {
+  for (const [label, content] of [
+    ["missing", null],
+    ["malformed", "androidboot.slot_suffix=_b\n"],
+    ["duplicate", 'androidboot.slot_suffix = "_b"\nandroidboot.slot_suffix = "_b"\n'],
+  ]) {
+    const item = makeFixture();
+    try {
+      const bootconfig = path.join(item.stateDir, "bootconfig");
+      if (content === null) fs.rmSync(bootconfig);
+      else fs.writeFileSync(bootconfig, content);
+      const before = snapshot(item);
+      const result = run(item);
+      assert.notEqual(result.status, 0, label);
+      assert.match(result.stderr, /cannot read one exact active slot suffix from bootconfig/, label);
+      assert.deepEqual(snapshot(item), before, label);
+    } finally {
+      removeFixture(item);
+    }
+  }
+});
 
 test("preflight requires one paired full-partition and payload identity", () => {
   for (const [fullState, payload] of [
@@ -480,6 +499,8 @@ for (const [label, mutate] of [
 
 test("preflight source exposes only installer and explicit read-only runtime inspection", () => {
   assert.doesNotMatch(preflightSource, /\bcurl\b|\bwget\b|\bmount\b|\bchown\b|\bchmod\b|\bmkdir\b|\bmv\b|\brm\b|\bln\b|\bfsync\b/);
+  assert.doesNotMatch(preflightSource, /\bbootctl\b/);
+  assert.match(preflightSource, /^BOOT_CONFIG=\/proc\/bootconfig$/m);
   assert.match(preflightSource, /\$SWAP_BOOT_KERNEL --print-kernel-sha256/);
   const item = makeFixture();
   try {

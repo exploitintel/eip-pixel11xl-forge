@@ -48,7 +48,8 @@ During manager installation the module:
 
 - requires Pixel 11 Pro XL `kodiak`, build `CD1A.260714.001.A9`, and
   KernelSU-Next 3.3.0 in `lkm` runtime mode;
-- proves the active slot using both Android slot state and `bootctl`;
+- proves the active slot by exact agreement between Android slot state and
+  the unique slot record in `/proc/bootconfig`;
 - verifies the active boot partition's complete hash and embedded kernel
   payload hash against an accepted state;
 - prepares and verifies the eight Docker 29.8.0 runtime binaries in the

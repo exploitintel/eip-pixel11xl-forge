@@ -8,6 +8,7 @@ set -f
 PROGRAM=install-preflight
 BUSYBOX=/data/adb/ksu/bin/busybox
 SYSTEM_BIN=/system/bin
+BOOT_CONFIG=/proc/bootconfig
 BOOT_DEVICE_ROOT=/dev/block/by-name
 MODDIR=${0%/*}
 MODDIR=${MODDIR%/*}
@@ -274,12 +275,31 @@ canonical_unsigned "$EXPECTED_PARTITION_SIZE" \
 
 SLOT_SUFFIX=$($SYSTEM_BIN/getprop ro.boot.slot_suffix 2>/dev/null) \
   || fail 'cannot read active slot suffix'
-CURRENT_SLOT=$($SYSTEM_BIN/bootctl get-current-slot 2>/dev/null) \
-  || fail 'cannot read active slot index'
-case "$SLOT_SUFFIX:$CURRENT_SLOT" in
-  _a:0|_b:1) ;;
-  *) fail 'active slot suffix and bootctl index disagree' ;;
+case "$SLOT_SUFFIX" in
+  _a|_b) ;;
+  *) fail 'active slot suffix has an invalid form' ;;
 esac
+# Android exposes the bootloader-selected suffix independently in bootconfig.
+# Require one canonical record so a missing, malformed, or ambiguous source
+# cannot be treated as agreement with getprop.
+# The single-quoted program is passed to awk; shell expansion is not intended.
+# shellcheck disable=SC2016
+BOOTCONFIG_SLOT=$(bb awk '
+  $1 == "androidboot.slot_suffix" {
+    count++
+    if (NF != 3 || $2 != "=" || ($3 != "\"_a\"" && $3 != "\"_b\""))
+      bad = 1
+    else
+      slot = substr($3, 2, 2)
+  }
+  END {
+    if (bad || count != 1) exit 1
+    print slot
+  }
+' "$BOOT_CONFIG" 2>/dev/null) \
+  || fail 'cannot read one exact active slot suffix from bootconfig'
+[ "$SLOT_SUFFIX" = "$BOOTCONFIG_SLOT" ] \
+  || fail 'active slot suffix and bootconfig disagree'
 BOOT_DEVICE=$BOOT_DEVICE_ROOT/boot$SLOT_SUFFIX
 boot_device_is_expected_type "$BOOT_DEVICE" \
   || fail 'active boot path is not a block device'

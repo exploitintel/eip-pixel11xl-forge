@@ -30,8 +30,10 @@ alone may use the package-pinned HTTPS origin through a qualified
 
 1. `install-preflight` verifies the complete package input grammar, exact
    device, fingerprint, Android version, security patch, kernel release,
-   KernelSU version and LKM mode, active slot agreement, full active boot
-   partition, and embedded kernel payload.
+   KernelSU version and LKM mode, exact active slot agreement between
+   `getprop ro.boot.slot_suffix` and the unique
+   `androidboot.slot_suffix = "_a|_b"` record in `/proc/bootconfig`, full
+   active boot partition, and embedded kernel payload.
 2. `release-transaction probe` establishes the current active release without
    mutation and refuses ambiguous host or daemon state.
 3. Conservative free-space checks independently require room in KernelSU's
