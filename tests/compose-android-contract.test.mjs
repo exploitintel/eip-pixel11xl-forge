@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const compose = fs.readFileSync(path.join(root, "eip", "compose.android.yaml"), "utf8");
+const launcher = fs.readFileSync(path.join(root, "eip", "phone-eip.sh"), "utf8");
 const operatorEntry = fs.readFileSync(path.join(root, "eip", "operator-entry.sh"), "utf8");
 
 function serviceBlock(name, nextName) {
@@ -36,6 +37,14 @@ test("Android services share Forge maintenance admission read-only", () => {
     assert.match(block, /^ {8}target: \/run\/eip-cve-control$/m);
     assert.match(block, /^ {8}read_only: true$/m);
   }
+});
+
+test("phone launcher creates the maintenance bind source before Compose up", () => {
+  const prepare = launcher.indexOf('if [ "${1:-}" = up ]');
+  const create = launcher.indexOf("install -d -m 0755 /data/docker/eip-cve-control");
+  const run = launcher.indexOf("exec /data/docker/bin/docker run");
+
+  assert.ok(prepare >= 0 && create > prepare && run > create);
 });
 
 test("the phone verifier uses the Android compose override without local Ollama", () => {
