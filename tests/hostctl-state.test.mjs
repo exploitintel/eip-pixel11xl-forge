@@ -113,59 +113,18 @@ test("normal status remains idle when publication is enabled", () => {
   }
 });
 
-test("park proof preserves publish-disabled idle behavior", () => {
-  for (const publishEnabled of ["false", "FALSE"]) {
-    const item = fixture();
-    try {
-      const result = run(item, { parkProof: true, publishEnabled });
-      assert.equal(result.status, 0, result.stderr);
-      assert.equal(fields(result.stdout).work, "idle");
-    } finally {
-      fs.rmSync(item.root, { recursive: true, force: true });
-    }
-  }
-});
-
-test("park proof refuses enabled publication before inspecting apparent idle", () => {
-  for (const publishEnabled of ["true", "TRUE"]) {
-    const item = fixture();
-    try {
-      const result = run(item, { parkProof: true, publishEnabled });
-      assert.equal(result.status, 12, result.stderr);
-      assert.deepEqual(fields(result.stdout), {
-        work: "ambiguous",
-        active_count: "unknown",
-        active_kind: "publish",
-        active_cve: "unknown",
-        active_phase: "publish",
-        active_started_at: "unknown",
-      });
-    } finally {
-      fs.rmSync(item.root, { recursive: true, force: true });
-    }
-  }
-});
-
-test("park proof refuses unavailable or invalid publication configuration", () => {
-  const cases = [
-    { omitPublishEnabled: true },
-    { publishEnabled: "" },
+test("park proof inspects real state regardless of the publication setting", () => {
+  for (const options of [
+    { publishEnabled: "false" },
+    { publishEnabled: "true" },
     { publishEnabled: "yes" },
-    { publishEnabled: " false " },
-  ];
-  for (const options of cases) {
+    { omitPublishEnabled: true },
+  ]) {
     const item = fixture();
     try {
       const result = run(item, { parkProof: true, ...options });
-      assert.equal(result.status, 13, result.stderr);
-      assert.deepEqual(fields(result.stdout), {
-        work: "ambiguous",
-        active_count: "unknown",
-        active_kind: "unknown",
-        active_cve: "unknown",
-        active_phase: "unknown",
-        active_started_at: "unknown",
-      });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(fields(result.stdout).work, "idle");
     } finally {
       fs.rmSync(item.root, { recursive: true, force: true });
     }
