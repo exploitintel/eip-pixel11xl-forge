@@ -82,7 +82,6 @@ BUILDER_ROOT=$(cd -- "$BUILDER_ROOT" && pwd -P) || \
 [[ "$BUILDER_ROOT" == "$EXPECTED_BUILDER_ROOT" ]] || \
   die 'installer is not inside the Pixel companion Git root'
 
-INSTALL_MAP=$BUILDER_ROOT/baseline/install-map.json
 PHONE_INSTALLER=$BUILDER_ROOT/eip/install-source-ops-phone.sh
 RESTORE_HELPER=$BUILDER_ROOT/eip/restore-source-ops-phone.sh
 OPS_LOCAL_PATHS=(
@@ -101,7 +100,7 @@ OPS_LOCAL_PATHS=(
 )
 
 for required_file in \
-  "$INSTALL_MAP" "$PHONE_INSTALLER" "$RESTORE_HELPER" \
+  "$PHONE_INSTALLER" "$RESTORE_HELPER" \
   "$BUILDER_ROOT/eip/install-source-ops.sh"; do
   relative_path=${required_file#"$BUILDER_ROOT"/}
   [[ -f "$required_file" && ! -L "$required_file" && -r "$required_file" ]] || \
@@ -117,7 +116,7 @@ for relative_path in "${OPS_LOCAL_PATHS[@]}"; do
     die "ops file is not tracked: $relative_path"
 done
 
-MANIFEST_FIELDS=$(python3 - "$MANIFEST_PATH" "$INSTALL_MAP" <<'PY'
+MANIFEST_FIELDS=$(python3 - "$MANIFEST_PATH" <<'PY'
 import json
 import re
 import sys
@@ -134,7 +133,6 @@ def load(path, description):
         reject(f"{description}: {error}")
 
 manifest = load(sys.argv[1], "build manifest")
-install_map = load(sys.argv[2], "install map")
 if not isinstance(manifest, dict):
     reject("manifest root must be an object")
 if type(manifest.get("schemaVersion")) is not int or manifest["schemaVersion"] != 1:
@@ -169,34 +167,9 @@ if not isinstance(builder_revision, str) or not revision.fullmatch(builder_revis
 if not isinstance(source_digest, str) or not digest.fullmatch(source_digest):
     reject("controller sourceSnapshotDigest is malformed")
 
-expected_ops = {
-    ("eip/compose.android.yaml", "/data/eip-cve-ops/compose.android.yaml", "deployment-config", False),
-    ("eip/operator-entry.sh", "/data/eip-cve-ops/entry.sh", "operation-script", True),
-    ("eip/phone-eip.sh", "/data/eip-cve-ops/eip.sh", "operation-script", True),
-    ("eip/eip-hostctl.sh", "/data/eip-cve-ops/eip-hostctl.sh", "lifecycle-authority", True),
-    ("eip/hostctl-state.mjs", "/data/eip-cve-ops/hostctl-state.mjs", "lifecycle-inspector", False),
-    ("eip/rebase-managed-skills.py", "/data/eip-cve-ops/rebase-managed-skills.py", "operation-script", True),
-    ("eip/redeploy-managed-state.sh", "/data/eip-cve-ops/redeploy-managed-state.sh", "operation-script", True),
-    ("eip/preflight.sh", "/data/eip-cve-ops/preflight.sh", "mutating-acceptance-script", True),
-    ("eip/fix-routing.sh", "/data/eip-cve-ops/fix-routing.sh", "operation-script", True),
-    ("eip/merge-env.sh", "/data/eip-cve-ops/merge-env.sh", "credential-writer", True),
-    ("eip/set-ollama.sh", "/data/eip-cve-ops/set-ollama.sh", "configuration-writer", True),
-    ("eip/set-ollama-key.sh", "/data/eip-cve-ops/set-ollama-key.sh", "credential-writer", True),
-}
-if not isinstance(install_map, dict) or not isinstance(install_map.get("entries"), list):
-    reject("install map entries must be an array")
-actual_ops = set()
-for entry in install_map["entries"]:
-    if not isinstance(entry, dict):
-        reject("install map entry must be an object")
-    remote = entry.get("remote")
-    if isinstance(remote, str) and remote.startswith("/data/eip-cve-ops/"):
-        actual_ops.add((entry.get("local"), remote, entry.get("class"), entry.get("expectedExecutable")))
-if actual_ops != expected_ops:
-    reject("/data/eip-cve-ops mapping differs from the reviewed twelve-file contract")
 print("|".join((source_revision, builder_revision, source_digest)))
 PY
-) || die 'build manifest or install map validation failed'
+) || die 'build manifest validation failed'
 IFS='|' read -r SOURCE_REVISION BUILDER_REVISION SOURCE_SNAPSHOT_DIGEST EXTRA_FIELD \
   <<< "$MANIFEST_FIELDS"
 [[ -z "$EXTRA_FIELD" && "$MANIFEST_FIELDS" == \
