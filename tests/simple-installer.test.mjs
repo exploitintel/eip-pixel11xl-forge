@@ -255,6 +255,7 @@ async function fakeToolMain() {
     "rm -rf /data/eip-cve-src /data/eip-cve-ops;",
     "configured=$(sed -n \"s/^DISK_SIZE_BYTES=//p\"",
     "rm -rf /data/local/tmp/eip-source-ops-",
+    "mkdir -p /data/local/tmp/eip-source-ops-",
     "chmod 0700 /data/local/tmp/eip-source-ops-",
     "/data/local/tmp/eip-source-ops-",
     "/data/eip-cve-backups/deploy-",
@@ -451,6 +452,10 @@ test("existing-install update preserves the disk and uses the transactional rele
   const park = commands.indexOf("/data/eip-cve-ops/eip-hostctl.sh reconcile");
   const restart = commands.lastIndexOf("setsid sh /data/docker/bin/dockerd.sh --runtime-only </dev/null >/dev/null 2>&1 &");
   assert.ok(restart > park, "Docker must restart after Forge reaches its parked state");
+  const cleanup = commands.findIndex((command) => command?.startsWith("rm -rf /data/local/tmp/eip-source-ops-"));
+  const shellMkdir = commands.findIndex((command) => command?.startsWith("mkdir -p /data/local/tmp/eip-source-ops-"));
+  assert.ok(cleanup >= 0 && shellMkdir > cleanup,
+    "ADB shell must create its upload directory after root removes stale staging");
   assert.ok(commands.some((command) => command?.startsWith("/data/local/tmp/eip-source-ops-")));
   assert.ok(!commands.some((command) => command?.startsWith("sed -i 's/^DISK_SIZE_BYTES=")));
   assert.ok(!commands.some((command) => command?.startsWith("rm -rf /data/eip-cve-src")));
