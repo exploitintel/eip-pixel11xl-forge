@@ -56,6 +56,7 @@ test("container publication is manual, digest-bound, and limited to package writ
   assert.match(workflow, /CONTROLLER_IMAGE=.*@\$controller_digest/);
   assert.match(workflow, /OPERATOR_IMAGE=.*@\$operator_digest/);
   assert.match(workflow, /DOCKER_CONFIG="\$anonymous_config" docker pull/);
+  assert.match(workflow, /docker buildx create --driver docker-container/);
   assert.match(operatorDockerfile, /^FROM docker:28\.5\.2-cli@sha256:[0-9a-f]{64}$/m);
 });
 
