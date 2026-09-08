@@ -27,6 +27,8 @@ MOUNTS=/proc/mounts
 IP_FORWARD=/proc/sys/net/ipv4/ip_forward
 LOCK_DIR=/data/docker/run/eip-hostctl.lock
 PARK_WHEN_IDLE_MARKER=/data/docker/eip-park-when-idle
+MAINTENANCE_DIR=/data/docker/eip-cve-control
+MAINTENANCE_FILE=/data/docker/eip-cve-control/maintenance-v1
 READY_TRIES=30
 STOP_TRIES=30
 SLEEP_SECONDS=2
@@ -273,38 +275,53 @@ work_snapshot() {
     *) return 1 ;;
   esac
   WORK_STATUS=$?
-  case "$WORK_STATUS" in
-    12)
-      [ "$WORK_SNAPSHOT_MODE" = park-proof ] || return 1
-      parse_work_output "$WORK_OUTPUT" || { unknown_work; return 1; }
-      [ "$WORK_STATE" = ambiguous ] && [ "$ACTIVE_COUNT" = unknown ] &&
-        [ "$ACTIVE_KIND" = publish ] && [ "$ACTIVE_CVE" = unknown ] &&
-        [ "$ACTIVE_PHASE" = publish ] && [ "$ACTIVE_STARTED_AT" = unknown ] || {
-          unknown_work
-          return 1
-        }
-      WORK_SNAPSHOT_REASON='publication is enabled and pre-intent publication cannot be proved idle'
-      return 1
-      ;;
-    13)
-      [ "$WORK_SNAPSHOT_MODE" = park-proof ] || return 1
-      parse_work_output "$WORK_OUTPUT" || { unknown_work; return 1; }
-      [ "$WORK_STATE" = ambiguous ] && [ "$ACTIVE_COUNT" = unknown ] &&
-        [ "$ACTIVE_KIND" = unknown ] && [ "$ACTIVE_CVE" = unknown ] &&
-        [ "$ACTIVE_PHASE" = unknown ] && [ "$ACTIVE_STARTED_AT" = unknown ] || {
-          unknown_work
-          return 1
-        }
-      WORK_SNAPSHOT_REASON='EIP_CVE_PUBLISH_ENABLED is unavailable or invalid'
-      return 1
-      ;;
-  esac
   case "$WORK_STATUS" in 0|10|11) ;; *) return 1 ;; esac
   parse_work_output "$WORK_OUTPUT" || { unknown_work; return 1; }
   case "$WORK_STATUS:$WORK_STATE" in
     0:idle|10:active|11:ambiguous) return 0 ;;
     *) unknown_work; return 1 ;;
   esac
+}
+
+broker_snapshot() {
+  BROKER_OK=unknown
+  AGENT_BUSY=unknown
+  [ -n "$CHAT_ID" ] || return 1
+  BROKER_OUTPUT=$("$DOCKER" exec "$CHAT_ID" sh -c \
+    "curl --silent --show-error --fail --max-time 10 --unix-socket \"\$EIP_CVE_CHAT_SOCKET\" http://localhost/v1/health" \
+    2>/dev/null) || return 1
+  case "$BROKER_OUTPUT" in
+    *'"ok":true'*) BROKER_OK=true ;;
+    *'"ok":false'*) BROKER_OK=false ;;
+    *) return 1 ;;
+  esac
+  case "$BROKER_OUTPUT" in
+    *'"busy":true'*) AGENT_BUSY=true ;;
+    *'"busy":false'*) AGENT_BUSY=false ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+
+enable_maintenance() {
+  mkdir -p "$MAINTENANCE_DIR" || die 'cannot create Forge maintenance directory'
+  chmod 0755 "$MAINTENANCE_DIR" || die 'cannot prepare Forge maintenance directory'
+  MAINTENANCE_TEMP=$MAINTENANCE_DIR/.maintenance-v1.$$
+  rm -f "$MAINTENANCE_TEMP"
+  (umask 022; printf 'EIP_CVE_MAINTENANCE_V1\n' > "$MAINTENANCE_TEMP") ||
+    die 'cannot create Forge maintenance record'
+  chmod 0644 "$MAINTENANCE_TEMP" || {
+    rm -f "$MAINTENANCE_TEMP"
+    die 'cannot prepare Forge maintenance record'
+  }
+  mv -f "$MAINTENANCE_TEMP" "$MAINTENANCE_FILE" || {
+    rm -f "$MAINTENANCE_TEMP"
+    die 'cannot enable Forge maintenance'
+  }
+}
+
+disable_maintenance() {
+  rm -f "$MAINTENANCE_FILE" || die 'cannot disable Forge maintenance'
 }
 
 park_when_idle_snapshot() {
@@ -439,7 +456,7 @@ acquire_lock() {
 }
 
 require_start_prerequisites() {
-  mkdir -p "$DOCKER_DATA" "$DOCKER_RUN" || die 'cannot create Docker directories'
+  mkdir -p "$DOCKER_DATA" "$DOCKER_RUN" "$MAINTENANCE_DIR" || die 'cannot create Docker directories'
   if ! grep -q " $DOCKER_DATA ext4 " "$MOUNTS"; then
     DISK_LOOP=$(losetup -j "$DOCKER_DISK" | sed -n '1s/:.*//p')
     [ -n "$DISK_LOOP" ] || DISK_LOOP=$(losetup -f --show "$DOCKER_DISK") || die 'cannot attach Docker disk'
@@ -529,6 +546,7 @@ start_docker() {
 }
 
 start_system() {
+  enable_maintenance
   require_start_prerequisites
   start_docker
   forge_snapshot || die 'cannot inspect Docker container ownership before Forge start'
@@ -540,14 +558,35 @@ start_system() {
     forge_snapshot || die 'cannot inspect Forge health after start'
     [ "$INVENTORY_UNKNOWN" = 0 ] || die 'unknown container appeared during Forge start'
     if [ "$FORGE_STATE" = running ]; then
-      rm -f "$PARK_WHEN_IDLE_MARKER" || die 'Forge is ready but the park-when-idle marker could not be cleared'
+      break
+    fi
+    sleep "$SLEEP_SECONDS"
+    START_ATTEMPT=$((START_ATTEMPT + 1))
+  done
+  [ "$FORGE_STATE" = running ] ||
+    die "Forge did not become healthy (ui=$UI_HEALTH chat=$CHAT_HEALTH); Docker remains available for recovery"
+
+  disable_maintenance
+  START_ATTEMPT=0
+  while [ "$START_ATTEMPT" -lt "$READY_TRIES" ]; do
+    forge_snapshot || {
+      enable_maintenance
+      die 'cannot inspect Forge health after reopening admission'
+    }
+    if [ "$INVENTORY_UNKNOWN" = 0 ] && [ "$FORGE_STATE" = running ] &&
+       broker_snapshot && [ "$BROKER_OK" = true ]; then
+      rm -f "$PARK_WHEN_IDLE_MARKER" || {
+        enable_maintenance
+        die 'Forge is ready but the park-when-idle marker could not be cleared'
+      }
       printf '%s\n' 'result=ready'
       return 0
     fi
     sleep "$SLEEP_SECONDS"
     START_ATTEMPT=$((START_ATTEMPT + 1))
   done
-  die "Forge did not become healthy (ui=$UI_HEALTH chat=$CHAT_HEALTH); Docker remains available for recovery"
+  enable_maintenance
+  die "Forge did not pass normal post-maintenance health (ui=$UI_HEALTH chat=$CHAT_HEALTH broker=$BROKER_OK); Docker remains available for recovery"
 }
 
 safe_idle_snapshot() {
@@ -569,6 +608,8 @@ safe_idle_snapshot() {
     active) PARK_REASON=active-work; return 1 ;;
     *) PARK_REASON=run-metadata-ambiguous; return 1 ;;
   esac
+  broker_snapshot || { PARK_REASON=agent-state-unavailable; return 1; }
+  [ "$AGENT_BUSY" = false ] || { PARK_REASON=agent-busy; return 1; }
   PARK_REASON=safe
   return 0
 }
@@ -593,15 +634,23 @@ stop_exact_daemon() {
 }
 
 park_system() {
+  PARK_MODE=${1:-immediate}
+  enable_maintenance
   probe_daemon
   if [ "$DAEMON_STATE" = stopped ]; then
     rm -f "$PARK_WHEN_IDLE_MARKER" || die 'cannot clear park-when-idle marker'
     printf '%s\n' 'result=parked'
     return 0
   fi
-  safe_idle_snapshot || return 3
+  if ! safe_idle_snapshot; then
+    [ "$PARK_MODE" = pending ] || disable_maintenance
+    return 3
+  fi
   sleep "$STABLE_IDLE_SECONDS"
-  safe_idle_snapshot || return 3
+  if ! safe_idle_snapshot; then
+    [ "$PARK_MODE" = pending ] || disable_maintenance
+    return 3
+  fi
   if [ "$INVENTORY_TOTAL" -gt 0 ]; then
     "$EIP" down || die 'Forge did not stop cleanly; Docker remains running'
   fi
@@ -613,16 +662,29 @@ park_system() {
 }
 
 write_park_when_idle_marker() {
+  enable_maintenance
   PARK_TEMP=$PARK_WHEN_IDLE_MARKER.tmp.$$
   rm -f "$PARK_TEMP"
-  (umask 077; printf '%s\n' requested > "$PARK_TEMP") || die 'cannot create park-when-idle marker'
-  chmod 0600 "$PARK_TEMP" || { rm -f "$PARK_TEMP"; die 'cannot protect park-when-idle marker'; }
-  mv -f "$PARK_TEMP" "$PARK_WHEN_IDLE_MARKER" || { rm -f "$PARK_TEMP"; die 'cannot publish park-when-idle marker'; }
+  (umask 077; printf '%s\n' requested > "$PARK_TEMP") || {
+    disable_maintenance
+    die 'cannot create park-when-idle marker'
+  }
+  chmod 0600 "$PARK_TEMP" || {
+    rm -f "$PARK_TEMP"
+    disable_maintenance
+    die 'cannot protect park-when-idle marker'
+  }
+  mv -f "$PARK_TEMP" "$PARK_WHEN_IDLE_MARKER" || {
+    rm -f "$PARK_TEMP"
+    disable_maintenance
+    die 'cannot publish park-when-idle marker'
+  }
   printf '%s\n' 'result=pending'
 }
 
 cancel_park_when_idle() {
   rm -f "$PARK_WHEN_IDLE_MARKER" || die 'cannot clear park-when-idle marker'
+  disable_maintenance
   printf '%s\n' 'result=cancelled'
 }
 
@@ -632,7 +694,7 @@ reconcile_park_when_idle() {
     off) printf '%s\n' 'result=idle'; return 0 ;;
     unknown) die 'park-when-idle marker is malformed' ;;
   esac
-  park_system
+  park_system pending
   PARK_STATUS=$?
   if [ "$PARK_STATUS" -eq 3 ]; then
     printf 'result=pending\nreason=%s\n' "$PARK_REASON"

@@ -34,32 +34,10 @@ function ambiguous() {
   process.exit(11);
 }
 
-function publicationParkRefusal(reason) {
-  const publicationEnabled = reason === "enabled";
-  process.stdout.write([
-    "work=ambiguous",
-    "active_count=unknown",
-    `active_kind=${publicationEnabled ? "publish" : "unknown"}`,
-    "active_cve=unknown",
-    `active_phase=${publicationEnabled ? "publish" : "unknown"}`,
-    "active_started_at=unknown",
-    "",
-  ].join("\n"));
-  process.exit(publicationEnabled ? 12 : 13);
-}
-
 const invocationArguments = process.argv.slice(2);
 if (invocationArguments.length > 1 ||
     (invocationArguments.length === 1 && invocationArguments[0] !== "--park-proof")) {
   ambiguous();
-}
-const parkProof = invocationArguments[0] === "--park-proof";
-if (parkProof) {
-  const configured = process.env.EIP_CVE_PUBLISH_ENABLED;
-  if (typeof configured !== "string" || !/^(?:true|false)$/i.test(configured)) {
-    publicationParkRefusal("invalid");
-  }
-  if (configured.toLowerCase() === "true") publicationParkRefusal("enabled");
 }
 
 function readMeta(name) {

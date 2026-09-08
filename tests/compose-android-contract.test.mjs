@@ -28,6 +28,16 @@ test("Android host-network services declare the matching execution context", () 
   );
 });
 
+test("Android services share Forge maintenance admission read-only", () => {
+  for (const [name, nextName] of [["ui", "chat"], ["chat", "ollama"]]) {
+    const block = serviceBlock(name, nextName);
+    assert.match(block, /^ {6}EIP_CVE_MAINTENANCE_FILE: \/run\/eip-cve-control\/maintenance-v1$/m);
+    assert.match(block, /^ {8}source: \/data\/docker\/eip-cve-control$/m);
+    assert.match(block, /^ {8}target: \/run\/eip-cve-control$/m);
+    assert.match(block, /^ {8}read_only: true$/m);
+  }
+});
+
 test("the phone verifier uses the Android compose override without local Ollama", () => {
   assert.match(
     operatorEntry,

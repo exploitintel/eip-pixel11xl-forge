@@ -31,17 +31,27 @@ services:
     depends_on: !reset []
     environment:
       EIP_CVE_EXECUTION_CONTEXT: host-network-controller
+      EIP_CVE_MAINTENANCE_FILE: /run/eip-cve-control/maintenance-v1
     volumes:
       - type: bind
         source: /data/docker/run/docker.sock
         target: /var/run/docker.sock
+      - type: bind
+        source: /data/docker/eip-cve-control
+        target: /run/eip-cve-control
+        read_only: true
   chat:
     network_mode: host
     environment:
       EIP_CVE_EXECUTION_CONTEXT: host-network-controller
+      EIP_CVE_MAINTENANCE_FILE: /run/eip-cve-control/maintenance-v1
     volumes:
       - type: bind
         source: /data/docker/run/docker.sock
         target: /var/run/docker.sock
+      - type: bind
+        source: /data/docker/eip-cve-control
+        target: /run/eip-cve-control
+        read_only: true
   ollama:
     profiles: ["never-on-android"]
