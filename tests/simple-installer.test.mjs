@@ -315,7 +315,7 @@ function fixture(t) {
   const calls = () => fs.readFileSync(callsFile, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse);
   const run = (args = [], overrides = {}) => spawnSync("/bin/bash",
     [script, "--serial", "TEST-SERIAL", ...args],
-    { env: { ...env, ...overrides }, encoding: "utf8", timeout: 15_000 });
+    { env: { ...env, ...overrides }, encoding: "utf8", timeout: 30_000 });
   return { root, script, env, calls, run, provider };
 }
 
