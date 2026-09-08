@@ -1,6 +1,6 @@
 # Online image and update plan
 
-Status: agreed direction, implementation pending
+Status: Slice 1 complete and phone-qualified; Slice 2 implementation in progress
 
 ## Objective
 
@@ -171,19 +171,19 @@ The installer then:
 2. reads and preserves the existing Docker disk-size configuration;
 3. starts only the Docker daemon if it is parked so registry operations are
    available;
-4. checks that the Docker filesystem has enough free space for the candidate;
-5. pulls the controller and operator by their release digests;
-6. enters maintenance admission and visibly waits for pipeline, publication,
+4. pulls the controller and operator by their release digests before changing
+   the running installation, so registry or storage failure leaves Forge live;
+5. enters maintenance admission and visibly waits for pipeline, publication,
    and Agent work to become idle;
-7. uses the existing deployment transaction to retain the previous source,
+6. uses the existing deployment transaction to retain the previous source,
    operations, managed skills, and image tags;
-8. activates the candidate source, operations, and images and recreates the
+7. activates the candidate source, operations, and images and recreates the
    stack;
-9. proves UI and broker process liveness while maintenance remains active;
-10. installs the Forge Control APK, reopens work admission, and requires
+8. proves UI and broker process liveness while maintenance remains active;
+9. installs the Forge Control APK, reopens work admission, and requires
     normal UI and Agent-chat health rather than the maintenance response;
-11. finalizes the transaction and prints `READY`; and
-12. re-enters maintenance and uses the existing transaction to restore the
+10. finalizes the transaction and prints `READY`; and
+11. uses the existing transaction to restore the
     previous source, operations, managed skills, image tags, and running stack
     if candidate readiness fails before finalization.
 

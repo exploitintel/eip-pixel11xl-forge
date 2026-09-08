@@ -11,6 +11,8 @@ const redeploy = path.join(root, "eip", "redeploy.sh");
 const candidateId = `sha256:${"1".repeat(64)}`;
 const previousId = `sha256:${"2".repeat(64)}`;
 const differentId = `sha256:${"3".repeat(64)}`;
+const operatorCandidateId = `sha256:${"7".repeat(64)}`;
+const operatorPreviousId = `sha256:${"8".repeat(64)}`;
 const remoteEscapedQuote = "'\\''";
 const testSerial = "pixel-test-01";
 
@@ -58,6 +60,8 @@ try {
     sourceFinalized: false,
     managedPrepared: false,
     managedRestored: false,
+    operatorActiveId: process.env.FAKE_PREVIOUS_OPERATOR_ID,
+    operatorRollbackId: null,
     started: false,
     upCalls: 0,
   };
@@ -107,6 +111,12 @@ if (command === "/data/eip-cve-ops/eip.sh down") {
   save();
   process.exit();
 }
+if (command === 'test "$(cat /data/docker/eip-cve-control/maintenance-v1 2>/dev/null)" = EIP_CVE_MAINTENANCE_V1') {
+  process.exit(process.env.FAKE_PARKED === "true" ? 0 : 1);
+}
+if (command === "rm -f /data/docker/eip-cve-control/maintenance-v1 /data/docker/eip-park-when-idle") {
+  process.exit();
+}
 
 const imageInspect = command.match(/ image inspect --format='\{\{\.Id\}\}' (\S+)$/);
 if (imageInspect) {
@@ -117,10 +127,29 @@ if (imageInspect) {
     process.stdout.write(state.activeId + "\n");
   } else if (reference === "eip-cve-controller:rollback" && state.rollbackId) {
     process.stdout.write(state.rollbackId + "\n");
+  } else if (reference === "eip-operator-shell:candidate") {
+    process.stdout.write(process.env.FAKE_OPERATOR_CANDIDATE_ID + "\n");
+  } else if (reference === "eip-operator-shell:phone") {
+    process.stdout.write(state.operatorActiveId + "\n");
+  } else if (reference === "eip-operator-shell:rollback" && state.operatorRollbackId) {
+    process.stdout.write(state.operatorRollbackId + "\n");
   } else {
     process.stderr.write("unknown image reference: " + reference + "\n");
     process.exitCode = 92;
   }
+  process.exit();
+}
+
+const operatorTag = command.match(/ tag (sha256:[0-9a-f]{64}) (eip-operator-shell:\S+)$/);
+if (operatorTag) {
+  if (operatorTag[2] === "eip-operator-shell:rollback") {
+    state.operatorRollbackId = operatorTag[1];
+  } else if (operatorTag[2] === "eip-operator-shell:phone") {
+    state.operatorActiveId = operatorTag[1];
+  } else {
+    process.exit(93);
+  }
+  save();
   process.exit();
 }
 
@@ -188,11 +217,22 @@ if (command === "/data/eip-cve-ops/eip.sh up --force-recreate --no-deps chat") {
   process.exit();
 }
 if (command === "/data/eip-cve-ops/eip.sh ps -q ui") {
+  if (process.env.FAKE_PARKED === "true" && !state.started) process.exit();
   process.stdout.write("a".repeat(64) + "\n");
   process.exit();
 }
 if (command === "/data/eip-cve-ops/eip.sh ps -q chat") {
+  if (process.env.FAKE_PARKED === "true" && !state.started) process.exit();
   process.stdout.write("b".repeat(64) + "\n");
+  process.exit();
+}
+if (command === "/data/eip-cve-ops/eip-hostctl.sh start") {
+  state.started = true;
+  save();
+  process.exit();
+}
+if (command === "/data/eip-cve-ops/eip-hostctl.sh status") {
+  process.stdout.write(state.started ? "system=ready\n" : "system=parked\n");
   process.exit();
 }
 if (command.includes(" /data/docker/bin/docker inspect --format='{{.Image}}|")) {
@@ -265,7 +305,7 @@ function manifest(overrides = {}) {
   };
 }
 
-function harness({ manifestOverrides, environment = {}, serialArgs = ["--serial", testSerial] } = {}) {
+function harness({ manifestOverrides, environment = {}, serialArgs = ["--serial", testSerial], parked = false } = {}) {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pixel-redeploy-test-"));
   const fakeBin = path.join(temporaryRoot, "bin");
   const fakeHome = path.join(temporaryRoot, "home");
@@ -287,12 +327,15 @@ function harness({ manifestOverrides, environment = {}, serialArgs = ["--serial"
     FAKE_DIFFERENT_IMAGE_ID: differentId,
     FAKE_PHONE_LOADED_IMAGE_ID: candidateId,
     FAKE_PREVIOUS_IMAGE_ID: previousId,
+    FAKE_OPERATOR_CANDIDATE_ID: operatorCandidateId,
+    FAKE_PREVIOUS_OPERATOR_ID: operatorPreviousId,
+    FAKE_PARKED: String(parked),
     FAKE_HEALTH_MODE: "healthy",
     ...environment,
   };
   if (!("DOCKER_HOST" in environment)) delete env.DOCKER_HOST;
 
-  const result = spawnSync("/bin/bash", [redeploy, ...serialArgs, "--manifest", manifestPath], {
+  const result = spawnSync("/bin/bash", [redeploy, ...serialArgs, "--manifest", manifestPath, ...(parked ? ["--parked"] : [])], {
     cwd: root,
     encoding: "utf8",
     env,
@@ -313,6 +356,64 @@ function harness({ manifestOverrides, environment = {}, serialArgs = ["--serial"
       : null,
   };
 }
+
+test("a parked release transaction promotes both images and reopens admission through hostctl", () => {
+  const result = harness({
+    parked: true,
+    manifestOverrides: {
+      scope: "release-images",
+      operator: { tag: "eip-operator-shell:candidate", imageId: operatorCandidateId },
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.phoneState.activeId, candidateId);
+  assert.equal(result.phoneState.operatorActiveId, operatorCandidateId);
+  assert.equal(result.phoneState.operatorRollbackId, operatorPreviousId);
+  const commands = result.adbCalls.map(({ command }) => command);
+  assert.equal(commands.includes("/data/eip-cve-ops/eip.sh down"), false);
+  const retainOperator = commands.indexOf(`${phoneDocker()} tag ${operatorPreviousId} eip-operator-shell:rollback`);
+  const promoteOperator = commands.indexOf(`${phoneDocker()} tag ${operatorCandidateId} eip-operator-shell:phone`);
+  const promoteController = commands.indexOf(`${phoneDocker()} tag ${candidateId} eip-cve-controller:local`);
+  const start = commands.indexOf("/data/eip-cve-ops/eip-hostctl.sh start");
+  const finalize = commands.findIndex((command) => command.includes("/restore-source-ops.sh finalize "));
+  assert.ok(retainOperator >= 0 && retainOperator < promoteOperator);
+  assert.ok(promoteOperator < promoteController && promoteController < start && start < finalize);
+});
+
+test("a parked release transaction accepts an unchanged operator image", () => {
+  const result = harness({
+    parked: true,
+    environment: { FAKE_PREVIOUS_OPERATOR_ID: operatorCandidateId },
+    manifestOverrides: {
+      scope: "release-images",
+      operator: { tag: "eip-operator-shell:candidate", imageId: operatorCandidateId },
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const commands = result.adbCalls.map(({ command }) => command);
+  assert.ok(!commands.some((command) => command.includes(" tag ") && command.includes("eip-operator-shell:")));
+  assert.equal(result.phoneState.activeId, candidateId);
+});
+
+test("a parked candidate failure keeps admission closed until hostctl restores the previous stack", () => {
+  const result = harness({
+    parked: true,
+    environment: { FAKE_CANDIDATE_UP_FAILURE: "true" },
+    manifestOverrides: {
+      scope: "release-images",
+      operator: { tag: "eip-operator-shell:candidate", imageId: operatorCandidateId },
+    },
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /rollback succeeded/);
+  assert.equal(result.phoneState.activeId, previousId);
+  assert.equal(result.phoneState.operatorActiveId, operatorPreviousId);
+  const commands = result.adbCalls.map(({ command }) => command);
+  assert.equal(commands.includes("rm -f /data/docker/eip-cve-control/maintenance-v1 /data/docker/eip-park-when-idle"), false);
+  const restore = commands.indexOf(`${phoneDocker()} tag ${previousId} eip-cve-controller:local`);
+  const lifecycleStart = commands.lastIndexOf("/data/eip-cve-ops/eip-hostctl.sh start");
+  assert.ok(restore >= 0 && lifecycleStart > restore);
+});
 
 test("a successful redeploy retains rollback before promoting and proves both services", () => {
   const result = harness();

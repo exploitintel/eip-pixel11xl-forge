@@ -84,6 +84,7 @@ verify_file() {
 
 SERIAL=
 DISK_GIB=64
+DISK_GIB_SET=0
 PROVIDER_ENV=
 WIPE=0
 EXPECTED_DEVICE=kodiak
@@ -93,7 +94,7 @@ EXPECTED_SECURITY_PATCH=2026-08-05
 while (($#)); do
   case "$1" in
     --serial) require_value "$@"; SERIAL=$2; shift 2 ;;
-    --disk-gib) require_value "$@"; DISK_GIB=$2; shift 2 ;;
+    --disk-gib) require_value "$@"; DISK_GIB=$2; DISK_GIB_SET=1; shift 2 ;;
     --provider-env) require_value "$@"; PROVIDER_ENV=$2; shift 2 ;;
     --wipe) WIPE=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -107,16 +108,29 @@ DISK_BYTES=$((DISK_GIB * 1024 * 1024 * 1024))
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 PAYLOAD=$SCRIPT_DIR/payload
-for file in host-module.zip docker-engine.tgz kernel.lz4 stock-boot.img ksu-init-boot.img ksu-manager.apk ksu-grant-profile controller.tar operator.tar forge-control.apk forge-source.tar forge.lock ops.tar; do
+for file in forge-control.apk forge-source.tar forge.lock ops.tar source-ops.tar source-ops.txt \
+  install-source-ops-phone.sh restore-source-ops-phone.sh redeploy.sh deployment-manifest.json; do
   [[ -f "$PAYLOAD/$file" ]] || die "package file is missing: payload/$file"
 done
-verify_file "$PAYLOAD/stock-boot.img" 5fc827ab5adfaf81f84cd7b1ab8675684e5588aaff832e9ba45051a72d0b06a2 'stock boot image'
-verify_file "$PAYLOAD/ksu-init-boot.img" bd471feb086b8bd0466dd2c1ec52598fbaa4a97c4bde7d58f7b0f051f02e553f 'KernelSU init_boot image'
-verify_file "$PAYLOAD/ksu-manager.apk" fd0b12385c98fe9d5f4f1257b5f184e55c74c1376637507df0718305f5d7a924 'KernelSU Manager APK'
+LOCK_VERSION=$(sed -n 's/^LOCK_VERSION=//p' "$PAYLOAD/forge.lock")
+[[ "$LOCK_VERSION" == 2 ]] || die 'payload/forge.lock has an unsupported version'
+PIXEL_REVISION=$(sed -n 's/^PIXEL_REVISION=//p' "$PAYLOAD/forge.lock")
+FORGE_REVISION=$(sed -n 's/^FORGE_REVISION=//p' "$PAYLOAD/forge.lock")
+FORGE_SOURCE_SHA256=$(sed -n 's/^FORGE_SOURCE_SHA256=//p' "$PAYLOAD/forge.lock")
+CONTROLLER_IMAGE=$(sed -n 's/^CONTROLLER_IMAGE=//p' "$PAYLOAD/forge.lock")
 CONTROLLER_CONFIG_SHA256=$(sed -n 's/^CONTROLLER_CONFIG_SHA256=//p' "$PAYLOAD/forge.lock")
-[[ "$CONTROLLER_CONFIG_SHA256" =~ ^[0-9a-f]{64}$ ]] || die 'payload/forge.lock has an invalid controller config ID'
+OPERATOR_IMAGE=$(sed -n 's/^OPERATOR_IMAGE=//p' "$PAYLOAD/forge.lock")
 OPERATOR_CONFIG_SHA256=$(sed -n 's/^OPERATOR_CONFIG_SHA256=//p' "$PAYLOAD/forge.lock")
-[[ "$OPERATOR_CONFIG_SHA256" =~ ^[0-9a-f]{64}$ ]] || die 'payload/forge.lock has an invalid operator config ID'
+[[ "$PIXEL_REVISION" =~ ^[0-9a-f]{40}$ && "$FORGE_REVISION" =~ ^[0-9a-f]{40}$ ]] || \
+  die 'payload/forge.lock has an invalid source revision'
+for digest in "$FORGE_SOURCE_SHA256" "$CONTROLLER_CONFIG_SHA256" "$OPERATOR_CONFIG_SHA256"; do
+  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || die 'payload/forge.lock has an invalid digest'
+done
+[[ "$CONTROLLER_IMAGE" =~ ^ghcr\.io/exploitintel/eip-pixel11xl-forge-controller@sha256:[0-9a-f]{64}$ ]] || \
+  die 'payload/forge.lock has an invalid controller image reference'
+[[ "$OPERATOR_IMAGE" =~ ^ghcr\.io/exploitintel/eip-pixel11xl-forge-operator@sha256:[0-9a-f]{64}$ ]] || \
+  die 'payload/forge.lock has an invalid operator image reference'
+verify_file "$PAYLOAD/forge-source.tar" "$FORGE_SOURCE_SHA256" 'Forge source archive'
 
 if [[ -n "${ADB:-}" ]]; then
   ADB_BIN=$ADB
@@ -128,15 +142,19 @@ else
   die 'adb is not installed'
 fi
 
-if [[ -n "${FASTBOOT:-}" ]]; then
-  FASTBOOT_BIN=$FASTBOOT
-elif command -v fastboot >/dev/null 2>&1; then
-  FASTBOOT_BIN=$(command -v fastboot)
-elif [[ -x "$(dirname "$ADB_BIN")/fastboot" ]]; then
-  FASTBOOT_BIN=$(dirname "$ADB_BIN")/fastboot
-else
-  die 'fastboot is not installed'
-fi
+FASTBOOT_BIN=
+
+resolve_fastboot() {
+  if [[ -n "${FASTBOOT:-}" ]]; then
+    FASTBOOT_BIN=$FASTBOOT
+  elif command -v fastboot >/dev/null 2>&1; then
+    FASTBOOT_BIN=$(command -v fastboot)
+  elif [[ -x "$(dirname "$ADB_BIN")/fastboot" ]]; then
+    FASTBOOT_BIN=$(dirname "$ADB_BIN")/fastboot
+  else
+    die 'fastboot is not installed'
+  fi
+}
 
 phone() {
   local command=$1 quoted
@@ -208,6 +226,7 @@ make_shell_root_image() {
 }
 
 if ((WIPE)); then
+  resolve_fastboot
   validate_android_target
   stage "Factory-wiping $SERIAL" 'Check the fastboot error above; do not interrupt an active wipe.'
   "$ADB_BIN" -s "$SERIAL" reboot bootloader >/dev/null 2>&1 || true
@@ -233,6 +252,7 @@ root_available() {
 
 bootstrap_root() {
   local slot bootstrap_dir
+  resolve_fastboot
   stage 'Preparing KernelSU bootstrap' 'Check the package inputs and the USB error above.'
   bootstrap_dir=$(mktemp -d "${TMPDIR:-/tmp}/eip-forge-bootstrap.XXXXXX")
   make_shell_root_image "$bootstrap_dir"
@@ -269,15 +289,37 @@ bootstrap_root() {
   root_available || die 'KernelSU shell root did not survive reboot'
 }
 
-prepare_disk() {
+require_fresh_payload() {
+  local file
+  for file in host-module.zip docker-engine.tgz kernel.lz4 stock-boot.img ksu-init-boot.img \
+    ksu-manager.apk ksu-grant-profile; do
+    [[ -f "$PAYLOAD/$file" ]] || die "fresh installation requires payload/$file"
+  done
+  verify_file "$PAYLOAD/stock-boot.img" 5fc827ab5adfaf81f84cd7b1ab8675684e5588aaff832e9ba45051a72d0b06a2 'stock boot image'
+  verify_file "$PAYLOAD/ksu-init-boot.img" bd471feb086b8bd0466dd2c1ec52598fbaa4a97c4bde7d58f7b0f051f02e553f 'KernelSU init_boot image'
+  verify_file "$PAYLOAD/ksu-manager.apk" fd0b12385c98fe9d5f4f1257b5f184e55c74c1376637507df0718305f5d7a924 'KernelSU Manager APK'
+}
+
+prepare_fresh_disk() {
   phone "sed -i 's/^DISK_SIZE_BYTES=.*/DISK_SIZE_BYTES=$DISK_BYTES/' /data/docker/config/host.conf"
   phone "mkdir -p /data/docker/lib /data/docker/run; if ! test -f /data/docker/disk.img; then truncate -s $DISK_BYTES /data/docker/disk.img; mke2fs -q -t ext4 -O '^has_journal,^casefold' /data/docker/disk.img; fi"
+  mount_existing_disk
+}
+
+mount_existing_disk() {
   # shellcheck disable=SC2016 # Variables in phone commands expand on Android.
   phone 'if ! grep -q " /data/docker/lib ext4 " /proc/self/mounts; then loop=$(losetup -j /data/docker/disk.img | sed -n "1s/:.*//p"); test -n "$loop" || loop=$(losetup -f --show /data/docker/disk.img); mount -t ext4 -o noatime,nodev "$loop" /data/docker/lib; fi'
 }
 
 start_docker() {
-  prepare_disk
+  if [[ "$EXISTING_INSTALL" == true ]]; then
+    # shellcheck disable=SC2016 # Variables are evaluated by Android's shell.
+    phone 'configured=$(sed -n "s/^DISK_SIZE_BYTES=//p" /data/docker/config/host.conf); actual=$(stat -c %s /data/docker/disk.img); test -n "$configured" && test "$configured" = "$actual"' || \
+      die 'existing Docker disk does not match its host configuration'
+    mount_existing_disk
+  else
+    prepare_fresh_disk
+  fi
   phone 'echo 1 > /proc/sys/net/ipv4/ip_forward; iptables -C INPUT -p tcp --dport 7171 -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p tcp --dport 7171 -j ACCEPT; ip rule show | grep -q "9990:.*to 172.17.0.0/16 lookup main" || ip rule add to 172.17.0.0/16 lookup main pref 9990; ip rule show | grep -q "9991:.*from 172.17.0.0/16 lookup wlan0" || ip rule add from 172.17.0.0/16 lookup 1016 pref 9991'
   if ! phone 'DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker info >/dev/null 2>&1'; then
     phone 'setsid sh /data/docker/bin/dockerd.sh --runtime-only </dev/null >/dev/null 2>&1 &'
@@ -292,55 +334,92 @@ start_docker() {
 
 enable_control_app() {
   local control_uid
-  control_uid=$("$ADB_BIN" -s "$SERIAL" shell 'pm list packages -U com.exploitintel.forgecontrol' \
-    | tr -d '\r' | sed -n 's/.* uid://p')
-  [[ "$control_uid" =~ ^[0-9]+$ ]] || die 'cannot determine Forge Control UID'
-
-  push "$PAYLOAD/ksu-grant-profile" /data/local/tmp/eip-ksu-grant-profile
-  phone "chmod 700 /data/local/tmp/eip-ksu-grant-profile; /data/local/tmp/eip-ksu-grant-profile $control_uid com.exploitintel.forgecontrol; rc=\$?; rm -f /data/local/tmp/eip-ksu-grant-profile; exit \$rc"
+  if [[ "$EXISTING_INSTALL" != true ]]; then
+    control_uid=$("$ADB_BIN" -s "$SERIAL" shell 'pm list packages -U com.exploitintel.forgecontrol' \
+      | tr -d '\r' | sed -n 's/.* uid://p')
+    [[ "$control_uid" =~ ^[0-9]+$ ]] || die 'cannot determine Forge Control UID'
+    push "$PAYLOAD/ksu-grant-profile" /data/local/tmp/eip-ksu-grant-profile
+    phone "chmod 700 /data/local/tmp/eip-ksu-grant-profile; /data/local/tmp/eip-ksu-grant-profile $control_uid com.exploitintel.forgecontrol; rc=\$?; rm -f /data/local/tmp/eip-ksu-grant-profile; exit \$rc"
+  fi
   phone 'pm grant com.exploitintel.forgecontrol android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 || true'
   "$ADB_BIN" -s "$SERIAL" shell 'am start -n com.exploitintel.forgecontrol/.MainActivity >/dev/null'
 }
 
-load_image() {
-  local archive=$1 tag=$2 expected_id=${3:-} remote=/data/local/tmp/eip-simple-$1 output source current_id
-  stage "Checking image $archive" 'Check the Docker or USB error above.'
-  if [[ -n "$expected_id" ]]; then
-    current_id=$(phone "DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker image inspect --format '{{.Id}}' $tag" 2>/dev/null | tr -d '\r') || true
-  elif phone "DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker image inspect $tag >/dev/null 2>&1"; then
-    printf 'Using existing %s\n' "$tag" >&2
-    return 0
+pull_image() {
+  local reference=$1 tag=$2 expected_id=$3 current_id
+  stage "Downloading $tag" 'Check the phone Wi-Fi connection and public registry error above.'
+  phone "DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker pull $reference"
+  current_id=$(phone "DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker image inspect --format '{{.Id}}' $reference" | tr -d '\r')
+  [[ "$current_id" == "sha256:$expected_id" ]] || die "$tag downloaded the wrong image ID"
+  phone "DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker tag $reference $tag"
+}
+
+stage_source_ops_transaction() {
+  local remote manifest_sha
+  remote=/data/local/tmp/eip-source-ops-$FORGE_REVISION-$PIXEL_REVISION
+  hash_file "$PAYLOAD/source-ops.txt"
+  manifest_sha=$FILE_SHA256
+  phone "rm -rf $remote; install -d -m 0700 -o 0 -g 0 $remote"
+  push "$PAYLOAD/forge-source.tar" "$remote/source.tar"
+  push "$PAYLOAD/source-ops.tar" "$remote/ops.tar"
+  push "$PAYLOAD/source-ops.txt" "$remote/payload.txt"
+  push "$PAYLOAD/install-source-ops-phone.sh" "$remote/install-source-ops-phone.sh"
+  push "$PAYLOAD/restore-source-ops-phone.sh" "$remote/restore-source-ops-phone.sh"
+  phone "chmod 0700 $remote $remote/install-source-ops-phone.sh; chmod 0600 $remote/source.tar $remote/ops.tar $remote/payload.txt $remote/restore-source-ops-phone.sh"
+  phone "$remote/install-source-ops-phone.sh $remote $FORGE_REVISION $PIXEL_REVISION sha256:$FORGE_SOURCE_SHA256 sha256:$manifest_sha"
+  phone "/data/eip-cve-backups/deploy-$FORGE_REVISION-$PIXEL_REVISION/restore-source-ops.sh check-pending $FORGE_REVISION $PIXEL_REVISION sha256:$FORGE_SOURCE_SHA256"
+  phone "rm -rf $remote"
+}
+
+wait_until_parked() {
+  local attempt state
+  phone '/data/eip-cve-ops/eip-hostctl.sh park-when-idle'
+  for attempt in {1..120}; do
+    phone '/data/eip-cve-ops/eip-hostctl.sh reconcile' >/dev/null 2>&1 || true
+    state=$(phone '/data/eip-cve-ops/eip-hostctl.sh status' 2>/dev/null | tr -d '\r' | sed -n 's/^system=//p') || true
+    [[ "$state" == parked ]] && return 0
+    sleep 5
+  done
+  phone '/data/eip-cve-ops/eip-hostctl.sh cancel-park-when-idle' >/dev/null 2>&1 || true
+  die 'Forge did not become idle within 10 minutes; the pending park was cancelled'
+}
+
+configure_providers() {
+  stage 'Configuring providers' 'Check the configuration error above and the supplied provider file format (KEY=VALUE); do not paste credentials into reports.'
+  if [[ -n "$PROVIDER_ENV" ]]; then
+    printf 'Installing provider configuration\n' >&2
+    push "$PROVIDER_ENV" /data/local/tmp/eip-provider.env
+    # shellcheck disable=SC2016 # Preserve the remote merge result through cleanup.
+    phone '/data/eip-cve-ops/merge-env.sh < /data/local/tmp/eip-provider.env; rc=$?; rm -f /data/local/tmp/eip-provider.env; exit $rc'
   fi
-  if [[ -n "$expected_id" && "$current_id" == "sha256:$expected_id" ]]; then
-    printf 'Using existing %s\n' "$tag" >&2
-    return 0
-  fi
-  stage "Transferring $archive" 'Check the USB connection and available phone storage.'
-  push "$PAYLOAD/$archive" "$remote"
-  stage "Loading $archive" 'Check the Docker error and available phone storage; large imports can take several minutes.'
-  output=$(phone "DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker load -i $remote")
-  phone "rm -f $remote"
-  source=$(printf '%s\n' "$output" | tr -d '\r' | sed -n 's/^Loaded image ID: //p' | tail -n 1)
-  if [[ -z "$source" ]]; then
-    source=$(printf '%s\n' "$output" | tr -d '\r' | sed -n 's/^Loaded image: //p' | tail -n 1)
-  fi
-  [[ -n "$source" ]] || die "Docker did not report the image loaded from $archive"
-  if [[ -n "$expected_id" ]]; then
-    current_id=$(phone "DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker image inspect --format '{{.Id}}' $source" | tr -d '\r')
-    [[ "$current_id" == "sha256:$expected_id" ]] || die "$archive loaded the wrong image ID"
-  fi
-  phone "DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker tag $source $tag"
+}
+
+install_control_app() {
+  stage 'Installing Forge Control' 'Check the APK installation error and available phone storage.'
+  "$ADB_BIN" -s "$SERIAL" install -r "$PAYLOAD/forge-control.apk" >/dev/null
 }
 
 stage "Checking root on $SERIAL" 'Check that Android is booted and KernelSU shell root is available.'
 if ! root_available; then
+  require_fresh_payload
   bootstrap_root
 fi
 root_available || die 'KernelSU root is not available'
 
+EXISTING_INSTALL=false
+if phone 'test -x /data/docker/bin/docker && test -f /data/docker/disk.img && test -f /data/docker/config/host.conf && test -f /data/eip-cve/container.env && test -x /data/eip-cve-ops/eip-hostctl.sh && pm path com.exploitintel.forgecontrol >/dev/null' >/dev/null 2>&1; then
+  EXISTING_INSTALL=true
+fi
 HOST_INSTALLED=false
 if phone 'test -x /data/docker/bin/docker' >/dev/null 2>&1; then
   HOST_INSTALLED=true
+fi
+
+if [[ "$EXISTING_INSTALL" == true ]]; then
+  ((DISK_GIB_SET == 0)) || die '--disk-gib applies only to a fresh installation; the existing Docker disk was not changed'
+  printf 'Qualified existing installation found; preserving Docker disk, Forge state, and provider configuration.\n' >&2
+else
+  require_fresh_payload
 fi
 
 if [[ "$HOST_INSTALLED" == false ]]; then
@@ -349,7 +428,7 @@ if [[ "$HOST_INSTALLED" == false ]]; then
   push "$PAYLOAD/kernel.lz4" /data/local/tmp/Image-CD1A.260714.001.A9.lz4
   push "$PAYLOAD/host-module.zip" /data/local/tmp/eip-pixel11xl-forge.zip
   phone '/data/adb/ksud module install /data/local/tmp/eip-pixel11xl-forge.zip'
-  prepare_disk
+  prepare_fresh_disk
   slot=$("$ADB_BIN" -s "$SERIAL" shell getprop ro.boot.slot_suffix | tr -d '\r')
   case "$slot" in _a|_b) ;; *) die "cannot determine active slot: $slot" ;; esac
   module_root=$(phone 'if test -x /data/adb/modules_update/eip-pixel11xl-forge/bin/kernelctl; then printf /data/adb/modules_update/eip-pixel11xl-forge; else printf /data/adb/modules/eip-pixel11xl-forge; fi' | tr -d '\r')
@@ -361,72 +440,67 @@ fi
 stage 'Starting Docker on the phone' 'Check the Docker startup output above and available phone storage.'
 start_docker
 
-load_image controller.tar eip-cve-controller:local "$CONTROLLER_CONFIG_SHA256"
-load_image operator.tar eip-operator-shell:phone "$OPERATOR_CONFIG_SHA256"
+if [[ "$EXISTING_INSTALL" == true ]]; then
+  pull_image "$CONTROLLER_IMAGE" eip-cve-controller:phone "$CONTROLLER_CONFIG_SHA256"
+  pull_image "$OPERATOR_IMAGE" eip-operator-shell:candidate "$OPERATOR_CONFIG_SHA256"
+else
+  pull_image "$CONTROLLER_IMAGE" eip-cve-controller:local "$CONTROLLER_CONFIG_SHA256"
+  pull_image "$OPERATOR_IMAGE" eip-operator-shell:phone "$OPERATOR_CONFIG_SHA256"
+fi
 stage 'Downloading the pinned architecture handler' 'Check the phone Wi-Fi connection and registry error above.'
 phone 'DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker pull tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0'
 
-stage 'Checking existing Forge state' 'Check the reported state in Forge Control before trying installation again.'
-if phone 'test -x /data/eip-cve-ops/eip-hostctl.sh' >/dev/null 2>&1; then
-  current_state=$(phone '/data/eip-cve-ops/eip-hostctl.sh status' 2>/dev/null | tr -d '\r' | sed -n 's/^system=//p')
-  case "$current_state" in
-    ready|running) phone '/data/eip-cve-ops/eip-hostctl.sh park' ;;
-    parked|'') ;;
-    *) die "existing Forge state is $current_state" ;;
-  esac
-fi
-
-stage 'Installing Forge source and phone commands' 'Check the archive or USB error above and available phone storage.'
-push "$PAYLOAD/forge-source.tar" /data/local/tmp/eip-forge-source.tar
-push "$PAYLOAD/ops.tar" /data/local/tmp/eip-forge-ops.tar
-phone 'rm -rf /data/eip-cve-src /data/eip-cve-ops; mkdir -p /data/eip-cve-src /data/eip-cve-ops; tar -xf /data/local/tmp/eip-forge-source.tar -C /data/eip-cve-src; tar -xf /data/local/tmp/eip-forge-ops.tar -C /data/eip-cve-ops; chmod 0755 /data/eip-cve-ops/*.sh /data/eip-cve-ops/*.py; rm -f /data/local/tmp/eip-forge-source.tar /data/local/tmp/eip-forge-ops.tar'
-
-if ! phone 'test -f /data/eip-cve/container.env'; then
+if [[ "$EXISTING_INSTALL" == true ]]; then
+  configure_providers
+  install_control_app
+  stage 'Waiting for current Forge work to finish' 'Forge remains available until its active work is idle; close new work and wait.'
+  wait_until_parked
+  stage 'Restarting Docker for the update' 'Forge remains parked; check the Docker startup error above.'
+  start_docker
+  stage 'Installing the matched Forge update' 'Check the source transaction error above; existing state is retained for rollback.'
+  stage_source_ops_transaction
+else
+  stage 'Installing Forge source and phone commands' 'Check the archive or USB error above and available phone storage.'
+  push "$PAYLOAD/forge-source.tar" /data/local/tmp/eip-forge-source.tar
+  push "$PAYLOAD/ops.tar" /data/local/tmp/eip-forge-ops.tar
+  phone 'rm -rf /data/eip-cve-src /data/eip-cve-ops; mkdir -p /data/eip-cve-src /data/eip-cve-ops; tar -xf /data/local/tmp/eip-forge-source.tar -C /data/eip-cve-src; tar -xf /data/local/tmp/eip-forge-ops.tar -C /data/eip-cve-ops; chmod 0755 /data/eip-cve-ops/*.sh /data/eip-cve-ops/*.py; rm -f /data/local/tmp/eip-forge-source.tar /data/local/tmp/eip-forge-ops.tar'
   stage 'Creating Forge state' 'Check the bootstrap output above and available phone storage.'
   phone '/data/eip-cve-ops/eip.sh bootstrap'
   phone '/data/eip-cve-ops/set-ollama.sh https://ollama.com'
+  configure_providers
+  install_control_app
 fi
 
-stage 'Configuring providers' 'Check the configuration error above and the supplied provider file format (KEY=VALUE); do not paste credentials into reports.'
-if [[ -n "$PROVIDER_ENV" ]]; then
-  printf 'Installing provider configuration\n' >&2
-  push "$PROVIDER_ENV" /data/local/tmp/eip-provider.env
-  # shellcheck disable=SC2016 # Preserve the remote merge result through cleanup.
-  phone '/data/eip-cve-ops/merge-env.sh < /data/local/tmp/eip-provider.env; rc=$?; rm -f /data/local/tmp/eip-provider.env; exit $rc'
-fi
-
-stage 'Installing Forge Control' 'Check the APK installation error and available phone storage.'
-"$ADB_BIN" -s "$SERIAL" install -r "$PAYLOAD/forge-control.apk" >/dev/null
-
-stage 'Restarting Docker for the Forge update' 'Check the Docker startup output above and available phone storage.'
-start_docker
-
-stage 'Starting Forge WebUI' 'Check the UI startup output above and available phone storage.'
-phone '/data/eip-cve-ops/eip.sh up --force-recreate --no-deps ui'
-ui_ready=false
-for attempt in {1..30}; do
-  if ui_status=$(phone '/data/eip-cve-ops/eip-hostctl.sh status' 2>/dev/null | tr -d '\r') && \
-    printf '%s\n' "$ui_status" | grep -qx 'ui_health=healthy'; then
-    ui_ready=true
-    break
+if [[ "$EXISTING_INSTALL" == true ]]; then
+  stage 'Activating the Forge update' 'The previous images and source are retained automatically if the candidate does not become healthy.'
+  env -u DOCKER_HOST ADB="$ADB_BIN" "$PAYLOAD/redeploy.sh" \
+    --serial "$SERIAL" --manifest "$PAYLOAD/deployment-manifest.json" --parked
+else
+  stage 'Starting Forge WebUI' 'Check the UI startup output above and available phone storage.'
+  phone '/data/eip-cve-ops/eip.sh up --force-recreate --no-deps ui'
+  ui_ready=false
+  for attempt in {1..30}; do
+    if ui_status=$(phone '/data/eip-cve-ops/eip-hostctl.sh status' 2>/dev/null | tr -d '\r') && \
+      printf '%s\n' "$ui_status" | grep -qx 'ui_health=healthy'; then
+      ui_ready=true
+      break
+    fi
+    sleep 5
+  done
+  if [[ "$ui_ready" != true ]]; then
+    phone '/data/eip-cve-ops/eip.sh logs --no-color --tail 40 ui' || true
+    phone '/data/eip-cve-ops/eip.sh down' || true
+    die 'Forge WebUI did not become healthy for the managed-skills update'
   fi
-  sleep 5
-done
-if [[ "$ui_ready" != true ]]; then
-  phone '/data/eip-cve-ops/eip.sh logs --no-color --tail 40 ui' || true
-  phone '/data/eip-cve-ops/eip.sh down' || true
-  die 'Forge WebUI did not become healthy for the managed-skills update'
+  stage 'Updating managed skills' 'Check the managed-skills migration error above; no existing customization was reset.'
+  if ! phone '/data/eip-cve-ops/eip.sh skills-release'; then
+    phone '/data/eip-cve-ops/eip.sh logs --no-color --tail 40 ui' || true
+    phone '/data/eip-cve-ops/eip.sh down' || true
+    die 'managed-skills update failed'
+  fi
+  stage 'Starting Forge' 'Check the startup output above; use Forge Control Host details and logs to inspect the reported state.'
+  phone '/data/eip-cve-ops/eip-hostctl.sh start'
 fi
-
-stage 'Updating managed skills' 'Check the managed-skills migration error above; no existing customization was reset.'
-if ! phone '/data/eip-cve-ops/eip.sh skills-release'; then
-  phone '/data/eip-cve-ops/eip.sh logs --no-color --tail 40 ui' || true
-  phone '/data/eip-cve-ops/eip.sh down' || true
-  die 'managed-skills update failed'
-fi
-
-stage 'Starting Forge' 'Check the startup output above; use Forge Control Host details and logs to inspect the reported state.'
-phone '/data/eip-cve-ops/eip-hostctl.sh start'
 stage 'Waiting for Forge readiness' 'Check the status and logs above; use Forge Control Host details to identify the unhealthy service.'
 # shellcheck disable=SC2034 # Fixed retry count; only the number of attempts matters.
 for attempt in {1..60}; do
