@@ -45,9 +45,9 @@ STATE=${shellQuote(state)}
 CALLS=${shellQuote(calls)}
 APPLET=\${1:-}
 shift || exit 1
-printf 'busybox:%s' "$APPLET" >> "$CALLS"
-for ARG in "$@"; do printf ' %s' "$ARG" >> "$CALLS"; done
-printf '\n' >> "$CALLS"
+CALL="busybox:$APPLET"
+for ARG in "$@"; do CALL="$CALL $ARG"; done
+printf '%s\n' "$CALL" >> "$CALLS"
 case "$APPLET" in
   id) [ "$#" -eq 1 ] && [ "$1" = -u ] && printf '0\n' ;;
   readlink) [ "$#" -eq 2 ] && [ "$1" = -f ] && exec /bin/realpath "$2" ;;
