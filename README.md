@@ -96,6 +96,9 @@ Installation is complete only when the final line is:
 READY
 ```
 
+The installer prints the generated Forge WebUI username and password
+immediately before `READY`. Save the password for future logins.
+
 Open the Forge Control app on the phone, then tap **Open Forge WebUI**.
 
 ## What gets installed

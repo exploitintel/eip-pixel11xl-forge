@@ -82,6 +82,15 @@ The final line must be:
 READY
 ```
 
+Immediately before `READY`, the installer prints the generated Forge WebUI
+username and password. Save the password. To retrieve it later on macOS, run:
+
+```sh
+"$HOME/Library/Android/sdk/platform-tools/adb" \
+  -s ADB_SERIAL shell \
+  "su -c '/data/eip-cve-ops/eip.sh password'"
+```
+
 No local Ollama binary is installed. New state defaults to the Ollama.com API,
 while local Ollama and all other Forge providers remain configurable.
 

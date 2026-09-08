@@ -205,6 +205,10 @@ async function fakeToolMain() {
     process.stdout.write("fixture readiness log\n");
     return;
   }
+  if (command === "/data/eip-cve-ops/eip.sh password") {
+    process.stdout.write("EIP_CVE_UI_USER=operator\nEIP_CVE_UI_PASSWORD=fixture-webui-password\n");
+    return;
+  }
   if (command.startsWith("/data/eip-cve-ops/merge-env.sh ")) {
     // This is the only extracted remote command executed locally. Its entire
     // grammar is checked before both phone paths are remapped into this fixture.
@@ -576,6 +580,8 @@ for (const suppliedProviders of [false, true]) {
       /^(?:Agent )?chat[:=]\s*healthy$/im]) {
       assert.match(result.stdout, field);
     }
+    assert.match(result.stdout, /Forge WebUI login\n  Username: operator\n  Password: fixture-webui-password/);
+    assert.match(result.stdout, /eip\.sh\\ password/);
     assert.match(output, /open[^\n]*Forge Control|Forge Control[^\n]*open/i);
     assert.match(output, suppliedProviders
       ? /provider[^\n]*(?:installed|merged|imported)/i
