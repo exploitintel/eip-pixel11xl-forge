@@ -71,8 +71,10 @@ The Docker data image defaults to a sparse 64 GiB allocation. Select 8, 16,
 
 In one process, the normal invocation installs KernelSU-Next, the Pixel host
 module and kernel, Docker Engine, the pinned Forge images and source, the phone
-operations, and Forge Control. It configures providers, starts Forge, and
-waits for the host authority to report a healthy WebUI and agent-chat service.
+operations, and Forge Control. It configures providers, waits for the candidate
+WebUI, rebases any existing managed-skill state through Forge's release API,
+then starts the full stack and waits for the host authority to report a healthy
+WebUI and agent-chat service.
 
 The final line must be:
 

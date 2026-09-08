@@ -127,12 +127,30 @@ async function fakeToolMain() {
     fs.writeFileSync(env.FAKE_STARTED, "started\n");
     return;
   }
+  if (command === "/data/eip-cve-ops/eip-hostctl.sh park") {
+    fs.rmSync(env.FAKE_DOCKER_RUNNING, { force: true });
+    return;
+  }
+  if (command === "setsid sh /data/docker/bin/dockerd.sh --runtime-only </dev/null >/dev/null 2>&1 &") {
+    fs.writeFileSync(env.FAKE_DOCKER_RUNNING, "running\n");
+    return;
+  }
+  if (command === "/data/eip-cve-ops/eip.sh up --force-recreate --no-deps ui") {
+    if (!fs.existsSync(env.FAKE_DOCKER_RUNNING)) process.exit(94);
+    fs.writeFileSync(env.FAKE_UI_STARTED, "started\n");
+    return;
+  }
   if (command === "/data/eip-cve-ops/eip-hostctl.sh status") {
     let status = "schema_version=1\nsystem=ready\ndocker=running\nforge=running\n"
       + "ui_health=healthy\nchat_health=healthy\nwork=idle\nactive_count=0\n"
       + "unknown_containers=0\ndrain=off\nboot_policy=unmanaged\n"
       + "active_kind=none\nactive_cve=none\nactive_phase=none\nactive_started_at=none\n";
     const started = fs.existsSync(env.FAKE_STARTED);
+    const uiStarted = fs.existsSync(env.FAKE_UI_STARTED);
+    if (uiStarted && !started && env.FAKE_UI_STATUS_MODE === "never-ready") {
+      status = status.replace("system=ready", "system=degraded")
+        .replace("forge=running", "forge=partial").replace("ui_health=healthy", "ui_health=starting");
+    }
     if (started && env.FAKE_STATUS_MODE === "never-ready") {
       status = status.replace("system=ready", "system=degraded")
         .replace("forge=running", "forge=partial").replace("ui_health=healthy", "ui_health=starting");
@@ -165,6 +183,10 @@ async function fakeToolMain() {
   }
   if (command === `${docker} tag ${loadedSource} eip-cve-controller:local`
       || command === "rm -f /data/local/tmp/eip-simple-controller.tar") return;
+  if (command === `${docker} info >/dev/null 2>&1`) {
+    if (!fs.existsSync(env.FAKE_DOCKER_RUNNING)) process.exit(1);
+    return;
+  }
   if (command === "/data/eip-cve-ops/eip-hostctl.sh logs") {
     process.stdout.write("fixture readiness log\n");
     return;
@@ -188,10 +210,15 @@ async function fakeToolMain() {
     "true", "test -x /data/docker/bin/docker", "test -x /data/eip-cve-ops/eip-hostctl.sh",
     "test -f /data/eip-cve/container.env", "/data/eip-cve-ops/eip-hostctl.sh park",
     "/data/eip-cve-ops/eip.sh bootstrap",
+    "/data/eip-cve-ops/eip.sh up --force-recreate --no-deps ui",
+    "/data/eip-cve-ops/eip.sh skills-release",
+    "/data/eip-cve-ops/eip.sh logs --no-color --tail 40 ui",
+    "/data/eip-cve-ops/eip.sh down",
     "/data/eip-cve-ops/set-ollama.sh https://ollama.com",
     "am start -n com.exploitintel.forgecontrol/.MainActivity >/dev/null",
     "pm grant com.exploitintel.forgecontrol android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 || true",
     "DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker info >/dev/null 2>&1",
+    "setsid sh /data/docker/bin/dockerd.sh --runtime-only </dev/null >/dev/null 2>&1 &",
     "chmod 700 /data/local/tmp/eip-ksud",
     "rm -f /data/local/tmp/eip-ksud /data/local/tmp/eip-ksu-init-boot.img /data/local/tmp/eip-ksu-shell-root.img",
   ]);
@@ -233,6 +260,8 @@ function fixture(t) {
   }
   const callsFile = path.join(root, "calls.jsonl");
   fs.writeFileSync(callsFile, "");
+  const dockerRunning = path.join(root, "docker-running");
+  fs.writeFileSync(dockerRunning, "running\n");
   const provider = path.join(root, "providers.env");
   fs.writeFileSync(provider, "FIXTURE_SETTING=not-a-credential\n");
   const mergeHelper = path.join(root, "merge-helper");
@@ -245,7 +274,9 @@ function fixture(t) {
     FAKE_FAIL_MATCH: "", FAKE_FAIL_STATUS: "23", FAKE_DELAY_MATCH: "",
     FAKE_DELAY_MILLIS: "0", FAKE_MERGE_STATUS: "0",
     FAKE_DELAY_RELEASE: "", FAKE_DELAY_READY: "",
-    FAKE_STARTED: path.join(root, "started"), FAKE_STATUS_MODE: "ready", FAKE_LOAD_IMAGE: "0",
+    FAKE_STARTED: path.join(root, "started"), FAKE_UI_STARTED: path.join(root, "ui-started"),
+    FAKE_DOCKER_RUNNING: dockerRunning, FAKE_STATUS_MODE: "ready", FAKE_UI_STATUS_MODE: "ready",
+    FAKE_LOAD_IMAGE: "0",
     FAKE_FORGE_STATE_EXISTS: "1",
     FAKE_EXISTING_CONTROLLER_ID: controllerConfig,
     FAKE_LOADED_CONTROLLER_ID: controllerConfig,
@@ -291,6 +322,43 @@ test("installer replaces a stale existing controller image", (t) => {
     + "load -i /data/local/tmp/eip-simple-controller.tar"));
   assert.ok(commands.includes("DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker "
     + `tag sha256:${"d".repeat(64)} eip-cve-controller:local`));
+});
+
+test("installer rebases managed skills after the new WebUI starts and before chat", (t) => {
+  const item = fixture(t);
+  const result = item.run();
+  assert.equal(result.status, 0, result.stderr);
+  const commands = item.calls().map((call) => call.command).filter(Boolean);
+  const ui = commands.indexOf("/data/eip-cve-ops/eip.sh up --force-recreate --no-deps ui");
+  const release = commands.indexOf("/data/eip-cve-ops/eip.sh skills-release");
+  const fullStart = commands.indexOf("/data/eip-cve-ops/eip-hostctl.sh start");
+  const park = commands.indexOf("/data/eip-cve-ops/eip-hostctl.sh park");
+  const dockerRestart = commands.indexOf(
+    "setsid sh /data/docker/bin/dockerd.sh --runtime-only </dev/null >/dev/null 2>&1 &");
+  assert.ok(park >= 0 && dockerRestart > park && ui > dockerRestart && release > ui && fullStart > release,
+    "Docker must restart after park and managed skills must release before chat starts");
+});
+
+test("installer cleans up an unready candidate WebUI so the update can be retried", (t) => {
+  const item = fixture(t);
+  const result = item.run([], { FAKE_UI_STATUS_MODE: "never-ready" });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /WebUI did not become healthy/);
+  const commands = item.calls().map((call) => call.command).filter(Boolean);
+  assert.ok(commands.includes("/data/eip-cve-ops/eip.sh logs --no-color --tail 40 ui"));
+  assert.ok(commands.includes("/data/eip-cve-ops/eip.sh down"));
+  assert.ok(!commands.includes("/data/eip-cve-ops/eip.sh skills-release"));
+  assert.ok(!commands.includes("/data/eip-cve-ops/eip-hostctl.sh start"));
+});
+
+test("installer cleans up a failed managed-skills release before full start", (t) => {
+  const item = fixture(t);
+  const result = item.run([], { FAKE_FAIL_MATCH: "skills-release" });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /managed-skills update failed/);
+  const commands = item.calls().map((call) => call.command).filter(Boolean);
+  assert.ok(commands.includes("/data/eip-cve-ops/eip.sh down"));
+  assert.ok(!commands.includes("/data/eip-cve-ops/eip-hostctl.sh start"));
 });
 
 test("installer refuses a controller archive with the wrong loaded image ID", (t) => {
@@ -542,7 +610,7 @@ test("readiness exhaustion and failed status commands retain diagnostics without
     assert.doesNotMatch(result.stdout, /^READY$/m);
     const calls = item.calls();
     assert.equal(calls.filter((call) => call.command === "/data/eip-cve-ops/eip-hostctl.sh status").length,
-      61, "readiness must stop at its fixed 60 attempts after the initial pre-install status");
+      62, "readiness must stop after the pre-install status, UI check, and fixed 60 attempts");
     assert.ok(calls.some((call) => call.verb === "install"), "fixture must reach app installation");
     assert.ok(calls.some((call) => call.command === "/data/eip-cve-ops/eip-hostctl.sh start"));
     assert.ok(calls.some((call) => call.command === "/data/eip-cve-ops/eip-hostctl.sh logs"));
