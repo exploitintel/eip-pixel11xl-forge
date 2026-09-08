@@ -164,25 +164,39 @@ async function fakeToolMain() {
     process.exit(1);
   }
   const docker = "DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker";
-  const image = env.FAKE_LOADED_CONTROLLER_ID;
-  const loadedSource = env.FAKE_LOAD_REPORT === "tag" ? "eip-cve-controller:phone" : image;
-  if (command === `${docker} image inspect --format '{{.Id}}' eip-cve-controller:local`) {
-    if (env.FAKE_LOAD_IMAGE === "1") process.exit(1);
-    process.stdout.write(`${env.FAKE_EXISTING_CONTROLLER_ID}\n`);
-    return;
+  const images = [
+    {
+      archive: "controller.tar", tag: "eip-cve-controller:local",
+      existing: env.FAKE_EXISTING_CONTROLLER_ID, loaded: env.FAKE_LOADED_CONTROLLER_ID,
+      report: env.FAKE_LOAD_REPORT, missing: env.FAKE_LOAD_IMAGE,
+      taggedSource: "eip-cve-controller:phone",
+    },
+    {
+      archive: "operator.tar", tag: "eip-operator-shell:phone",
+      existing: env.FAKE_EXISTING_OPERATOR_ID, loaded: env.FAKE_LOADED_OPERATOR_ID,
+      report: "id", missing: "0", taggedSource: "eip-operator-shell:loaded",
+    },
+  ];
+  for (const image of images) {
+    const loadedSource = image.report === "tag" ? image.taggedSource : image.loaded;
+    if (command === `${docker} image inspect --format '{{.Id}}' ${image.tag}`) {
+      if (image.missing === "1") process.exit(1);
+      process.stdout.write(`${image.existing}\n`);
+      return;
+    }
+    if (command === `${docker} load -i /data/local/tmp/eip-simple-${image.archive}`) {
+      process.stdout.write(image.report === "tag"
+        ? `fixture layer output\nLoaded image: ${loadedSource}\n`
+        : `fixture layer output\nLoaded image ID: ${loadedSource}\n`);
+      return;
+    }
+    if (command === `${docker} image inspect --format '{{.Id}}' ${loadedSource}`) {
+      process.stdout.write(`${image.loaded}\n`);
+      return;
+    }
+    if (command === `${docker} tag ${loadedSource} ${image.tag}`
+        || command === `rm -f /data/local/tmp/eip-simple-${image.archive}`) return;
   }
-  if (command === `${docker} load -i /data/local/tmp/eip-simple-controller.tar`) {
-    process.stdout.write(env.FAKE_LOAD_REPORT === "tag"
-      ? `fixture layer output\nLoaded image: ${loadedSource}\n`
-      : `fixture layer output\nLoaded image ID: ${loadedSource}\n`);
-    return;
-  }
-  if (command === `${docker} image inspect --format '{{.Id}}' ${loadedSource}`) {
-    process.stdout.write(`${image}\n`);
-    return;
-  }
-  if (command === `${docker} tag ${loadedSource} eip-cve-controller:local`
-      || command === "rm -f /data/local/tmp/eip-simple-controller.tar") return;
   if (command === `${docker} info >/dev/null 2>&1`) {
     if (!fs.existsSync(env.FAKE_DOCKER_RUNNING)) process.exit(1);
     return;
@@ -247,8 +261,10 @@ function fixture(t) {
     fs.writeFileSync(path.join(payload, name), "inert installer test payload\n");
   }
   const controllerConfig = `sha256:${"d".repeat(64)}`;
+  const operatorConfig = `sha256:${"e".repeat(64)}`;
   fs.writeFileSync(path.join(payload, "forge.lock"),
-    `CONTROLLER_CONFIG_SHA256=${controllerConfig.slice("sha256:".length)}\n`);
+    `CONTROLLER_CONFIG_SHA256=${controllerConfig.slice("sha256:".length)}\n`
+    + `OPERATOR_CONFIG_SHA256=${operatorConfig.slice("sha256:".length)}\n`);
   const script = path.join(root, "install.sh");
   fs.copyFileSync(installer, script);
   const mock = path.join(root, "fake-tool.mjs");
@@ -280,6 +296,8 @@ function fixture(t) {
     FAKE_FORGE_STATE_EXISTS: "1",
     FAKE_EXISTING_CONTROLLER_ID: controllerConfig,
     FAKE_LOADED_CONTROLLER_ID: controllerConfig,
+    FAKE_EXISTING_OPERATOR_ID: operatorConfig,
+    FAKE_LOADED_OPERATOR_ID: operatorConfig,
     FAKE_LOAD_REPORT: "id",
     FAKE_BAD_PAYLOAD: "",
     FAKE_ROOT_AVAILABLE: "1",
@@ -322,6 +340,17 @@ test("installer replaces a stale existing controller image", (t) => {
     + "load -i /data/local/tmp/eip-simple-controller.tar"));
   assert.ok(commands.includes("DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker "
     + `tag sha256:${"d".repeat(64)} eip-cve-controller:local`));
+});
+
+test("installer replaces a stale existing operator image", (t) => {
+  const item = fixture(t);
+  const result = item.run([], { FAKE_EXISTING_OPERATOR_ID: `sha256:${"c".repeat(64)}` });
+  assert.equal(result.status, 0, result.stderr);
+  const commands = item.calls().map((call) => call.command).filter(Boolean);
+  assert.ok(commands.includes("DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker "
+    + "load -i /data/local/tmp/eip-simple-operator.tar"));
+  assert.ok(commands.includes("DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker "
+    + `tag sha256:${"e".repeat(64)} eip-operator-shell:phone`));
 });
 
 test("installer rebases managed skills after the new WebUI starts and before chat", (t) => {
@@ -369,6 +398,19 @@ test("installer refuses a controller archive with the wrong loaded image ID", (t
   });
   assert.equal(result.status, 1, result.stderr);
   assert.match(result.stderr, /controller\.tar loaded the wrong image ID/);
+  const commands = item.calls().map((call) => call.command).filter(Boolean);
+  assert.ok(!commands.some((command) => command.includes("docker tag")));
+  expectNoCompletion(result, item.calls());
+});
+
+test("installer refuses an operator archive with the wrong loaded image ID", (t) => {
+  const item = fixture(t);
+  const result = item.run([], {
+    FAKE_EXISTING_OPERATOR_ID: `sha256:${"c".repeat(64)}`,
+    FAKE_LOADED_OPERATOR_ID: `sha256:${"a".repeat(64)}`,
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /operator\.tar loaded the wrong image ID/);
   const commands = item.calls().map((call) => call.command).filter(Boolean);
   assert.ok(!commands.some((command) => command.includes("docker tag")));
   expectNoCompletion(result, item.calls());

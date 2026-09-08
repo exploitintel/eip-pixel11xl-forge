@@ -45,7 +45,7 @@ test("the public tree contains only the one hash-bound non-secret private key", 
 
   const details = spawnSync("openssl", ["x509", "-in", pem, "-noout", "-subject", "-serial", "-dates", "-fingerprint", "-sha256"], { encoding: "utf8" });
   assert.equal(details.status, 0, details.stderr);
-  assert.match(details.stdout, /CN=eip-pixel11xl-forge public reproducibility fixture v1/);
+  assert.match(details.stdout, /CN\s*=\s*eip-pixel11xl-forge public reproducibility fixture v1/);
   assert.match(details.stdout, new RegExp(`serial=${key.certificate.serial}`));
   assert.match(details.stdout, /notBefore=Sep  6 00:00:00 2026 GMT/);
   assert.match(details.stdout, /notAfter=Sep  6 00:00:00 2126 GMT/);

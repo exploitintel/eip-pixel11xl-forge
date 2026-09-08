@@ -115,6 +115,8 @@ verify_file "$PAYLOAD/ksu-init-boot.img" bd471feb086b8bd0466dd2c1ec52598fbaa4a97
 verify_file "$PAYLOAD/ksu-manager.apk" fd0b12385c98fe9d5f4f1257b5f184e55c74c1376637507df0718305f5d7a924 'KernelSU Manager APK'
 CONTROLLER_CONFIG_SHA256=$(sed -n 's/^CONTROLLER_CONFIG_SHA256=//p' "$PAYLOAD/forge.lock")
 [[ "$CONTROLLER_CONFIG_SHA256" =~ ^[0-9a-f]{64}$ ]] || die 'payload/forge.lock has an invalid controller config ID'
+OPERATOR_CONFIG_SHA256=$(sed -n 's/^OPERATOR_CONFIG_SHA256=//p' "$PAYLOAD/forge.lock")
+[[ "$OPERATOR_CONFIG_SHA256" =~ ^[0-9a-f]{64}$ ]] || die 'payload/forge.lock has an invalid operator config ID'
 
 if [[ -n "${ADB:-}" ]]; then
   ADB_BIN=$ADB
@@ -360,7 +362,7 @@ stage 'Starting Docker on the phone' 'Check the Docker startup output above and 
 start_docker
 
 load_image controller.tar eip-cve-controller:local "$CONTROLLER_CONFIG_SHA256"
-load_image operator.tar eip-operator-shell:phone
+load_image operator.tar eip-operator-shell:phone "$OPERATOR_CONFIG_SHA256"
 stage 'Downloading the pinned architecture handler' 'Check the phone Wi-Fi connection and registry error above.'
 phone 'DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker pull tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0'
 
