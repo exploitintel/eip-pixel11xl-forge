@@ -434,6 +434,10 @@ for attempt in {1..60}; do
     printf '%s\n' "$ready_status" | grep -qx 'system=ready'; then
     stage 'Authorizing and opening Forge Control' 'Check the root-profile or app-launch error above.'
     enable_control_app
+    credentials=$(phone '/data/eip-cve-ops/eip.sh password')
+    ui_user=$(printf '%s\n' "$credentials" | sed -n 's/^EIP_CVE_UI_USER=//p')
+    ui_password=$(printf '%s\n' "$credentials" | sed -n 's/^EIP_CVE_UI_PASSWORD=//p')
+    [[ -n "$ui_user" && -n "$ui_password" ]] || die 'Forge WebUI credentials are unavailable'
     stop_progress
     printf '\nInstallation complete in %dm%02ds.\n' "$((SECONDS / 60))" "$((SECONDS % 60))"
     printf '%s\n' "$ready_status" | sed -n \
@@ -443,6 +447,10 @@ for attempt in {1..60}; do
     else
       printf 'Provider file: not supplied; no keys imported.\n'
     fi
+    printf '\nForge WebUI login\n  Username: %s\n  Password: %s\n' "$ui_user" "$ui_password"
+    printf 'Save this password. To show it again, run:\n  '
+    printf '%q ' "$ADB_BIN" -s "$SERIAL" shell "su -c '/data/eip-cve-ops/eip.sh password'"
+    printf '\n\n'
     printf 'Open Forge Control on the phone, then tap Open Forge WebUI.\n'
     printf 'READY\n'
     exit 0
