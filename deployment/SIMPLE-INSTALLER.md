@@ -106,7 +106,7 @@ Supplying the optional `--engine`, `--ksu-apk`, `--stock-boot`, and
 The builder accepts only the Forge commit in `FORGE_REVISION` and verifies
 that the controller image labels and source archive match that commit.
 The installer rechecks the exact prepared boot inputs before touching the
-phone and verifies the controller image ID after import.
+phone and verifies the controller and operator image IDs after import.
 
 Focused checks:
 

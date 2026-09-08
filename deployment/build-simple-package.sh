@@ -136,6 +136,18 @@ hash_file "$CONTROLLER"
 CONTROLLER_SHA256=$HASH
 CONTROLLER_CONFIG_SHA256=${CONTROLLER_CONFIG##*/}
 
+OPERATOR_CONFIG=$(tar -xOf "$OPERATOR" manifest.json 2>/dev/null | node -e '
+let input = "";
+process.stdin.on("data", chunk => input += chunk).on("end", () => {
+  const manifest = JSON.parse(input);
+  if (!Array.isArray(manifest) || manifest.length !== 1) process.exit(2);
+  process.stdout.write(String(manifest[0].Config || ""));
+});
+') || die 'cannot read operator image manifest'
+[[ "$OPERATOR_CONFIG" =~ ^blobs/sha256/[0-9a-f]{64}$ ]] || \
+  die 'operator image manifest has an invalid config path'
+OPERATOR_CONFIG_SHA256=${OPERATOR_CONFIG##*/}
+
 mkdir -p "$OUTPUT/payload" "$WORK/ops"
 cp "$SCRIPT_DIR/simple-install.sh" "$OUTPUT/install.sh"
 cp "$SCRIPT_DIR/prepare-firmware.sh" "$OUTPUT/prepare-firmware.sh"
@@ -161,6 +173,7 @@ FORGE_REVISION=$FORGE_REVISION
 FORGE_SOURCE_SHA256=$FORGE_SOURCE_SHA256
 CONTROLLER_CONFIG_SHA256=$CONTROLLER_CONFIG_SHA256
 CONTROLLER_ARCHIVE_SHA256=$CONTROLLER_SHA256
+OPERATOR_CONFIG_SHA256=$OPERATOR_CONFIG_SHA256
 EOF
 
 cp "$PROJECT_ROOT/eip/compose.android.yaml" "$WORK/ops/compose.android.yaml"

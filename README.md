@@ -130,6 +130,9 @@ npm test
 bash tools/check-public-tree.sh
 ```
 
+Pull requests and pushes to `main` run those checks plus the Android app host
+contract tests. Kernel and module candidate builds remain manual workflows.
+
 Detailed host and recovery documentation remains under [`docs/`](docs/).
 
 ## Important limits

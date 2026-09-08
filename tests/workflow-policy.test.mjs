@@ -10,6 +10,19 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const checker = path.join(projectRoot, "tools", "check-workflows.py");
 const refChecker = path.join(projectRoot, "tools", "check-candidate-ref.py");
 const workflowPath = path.join(projectRoot, ".github", "workflows", "kernel.yml");
+const ciWorkflowPath = path.join(projectRoot, ".github", "workflows", "ci.yml");
+
+test("source CI runs the normal checks and Android host contracts", () => {
+  const workflow = fs.readFileSync(ciWorkflowPath, "utf8");
+  assert.match(workflow, /^permissions: \{\}$/m);
+  assert.match(workflow, /^\s+runs-on: macos-15$/m);
+  assert.match(workflow, /^  push:\n    branches:\n      - main$/m);
+  assert.match(workflow, /^  pull_request:\n    branches:\n      - main$/m);
+  assert.match(workflow, /^  workflow_dispatch:$/m);
+  assert.match(workflow, /^\s+run: npm run check$/m);
+  assert.match(workflow, /^\s+run: android-app\/tools\/test-host\.sh$/m);
+  assert.doesNotMatch(workflow, /kernel\/build\.sh|build-qualification-module|module\.yml/);
+});
 
 test("Phase C workflow is pinned, least-privilege, attested, and release-free", () => {
   const result = spawnSync(checker, [], { cwd: projectRoot, encoding: "utf8" });
