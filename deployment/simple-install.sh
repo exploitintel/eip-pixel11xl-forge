@@ -396,6 +396,33 @@ fi
 stage 'Installing Forge Control' 'Check the APK installation error and available phone storage.'
 "$ADB_BIN" -s "$SERIAL" install -r "$PAYLOAD/forge-control.apk" >/dev/null
 
+stage 'Restarting Docker for the Forge update' 'Check the Docker startup output above and available phone storage.'
+start_docker
+
+stage 'Starting Forge WebUI' 'Check the UI startup output above and available phone storage.'
+phone '/data/eip-cve-ops/eip.sh up --force-recreate --no-deps ui'
+ui_ready=false
+for attempt in {1..30}; do
+  if ui_status=$(phone '/data/eip-cve-ops/eip-hostctl.sh status' 2>/dev/null | tr -d '\r') && \
+    printf '%s\n' "$ui_status" | grep -qx 'ui_health=healthy'; then
+    ui_ready=true
+    break
+  fi
+  sleep 5
+done
+if [[ "$ui_ready" != true ]]; then
+  phone '/data/eip-cve-ops/eip.sh logs --no-color --tail 40 ui' || true
+  phone '/data/eip-cve-ops/eip.sh down' || true
+  die 'Forge WebUI did not become healthy for the managed-skills update'
+fi
+
+stage 'Updating managed skills' 'Check the managed-skills migration error above; no existing customization was reset.'
+if ! phone '/data/eip-cve-ops/eip.sh skills-release'; then
+  phone '/data/eip-cve-ops/eip.sh logs --no-color --tail 40 ui' || true
+  phone '/data/eip-cve-ops/eip.sh down' || true
+  die 'managed-skills update failed'
+fi
+
 stage 'Starting Forge' 'Check the startup output above; use Forge Control Host details and logs to inspect the reported state.'
 phone '/data/eip-cve-ops/eip-hostctl.sh start'
 stage 'Waiting for Forge readiness' 'Check the status and logs above; use Forge Control Host details to identify the unhealthy service.'
