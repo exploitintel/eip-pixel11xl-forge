@@ -30,6 +30,8 @@ async function fakeToolMain() {
       ["stock-boot.img", "5fc827ab5adfaf81f84cd7b1ab8675684e5588aaff832e9ba45051a72d0b06a2"],
       ["ksu-init-boot.img", "bd471feb086b8bd0466dd2c1ec52598fbaa4a97c4bde7d58f7b0f051f02e553f"],
       ["ksu-manager.apk", "fd0b12385c98fe9d5f4f1257b5f184e55c74c1376637507df0718305f5d7a924"],
+      ["forge-source.tar", "f".repeat(64)],
+      ["source-ops.txt", "9".repeat(64)],
     ]);
     const name = [...hashes.keys()].find((candidate) => file?.endsWith(`/${candidate}`));
     if (!name || args.slice(0, -1).join(" ") !== "-a 256 --") reject();
@@ -131,6 +133,21 @@ async function fakeToolMain() {
     fs.rmSync(env.FAKE_DOCKER_RUNNING, { force: true });
     return;
   }
+  if (command === "/data/eip-cve-ops/eip-hostctl.sh park-when-idle") {
+    fs.writeFileSync(env.FAKE_PARK_PENDING, "pending\n");
+    return;
+  }
+  if (command === "/data/eip-cve-ops/eip-hostctl.sh reconcile") {
+    if (fs.existsSync(env.FAKE_PARK_PENDING)) {
+      fs.writeFileSync(env.FAKE_PARKED, "parked\n");
+      fs.rmSync(env.FAKE_DOCKER_RUNNING, { force: true });
+    }
+    return;
+  }
+  if (command === "/data/eip-cve-ops/eip-hostctl.sh cancel-park-when-idle") {
+    fs.rmSync(env.FAKE_PARK_PENDING, { force: true });
+    return;
+  }
   if (command === "setsid sh /data/docker/bin/dockerd.sh --runtime-only </dev/null >/dev/null 2>&1 &") {
     fs.writeFileSync(env.FAKE_DOCKER_RUNNING, "running\n");
     return;
@@ -145,6 +162,12 @@ async function fakeToolMain() {
       + "ui_health=healthy\nchat_health=healthy\nwork=idle\nactive_count=0\n"
       + "unknown_containers=0\ndrain=off\nboot_policy=unmanaged\n"
       + "active_kind=none\nactive_cve=none\nactive_phase=none\nactive_started_at=none\n";
+    if (fs.existsSync(env.FAKE_PARKED) && !fs.existsSync(env.FAKE_STARTED)) {
+      status = status.replace("system=ready", "system=parked")
+        .replace("forge=running", "forge=stopped")
+        .replace("ui_health=healthy", "ui_health=absent")
+        .replace("chat_health=healthy", "chat_health=absent");
+    }
     const started = fs.existsSync(env.FAKE_STARTED);
     const uiStarted = fs.existsSync(env.FAKE_UI_STARTED);
     if (uiStarted && !started && env.FAKE_UI_STATUS_MODE === "never-ready") {
@@ -163,40 +186,25 @@ async function fakeToolMain() {
       && env.FAKE_FORGE_STATE_EXISTS === "0") {
     process.exit(1);
   }
-  const docker = "DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker";
-  const images = [
-    {
-      archive: "controller.tar", tag: "eip-cve-controller:local",
-      existing: env.FAKE_EXISTING_CONTROLLER_ID, loaded: env.FAKE_LOADED_CONTROLLER_ID,
-      report: env.FAKE_LOAD_REPORT, missing: env.FAKE_LOAD_IMAGE,
-      taggedSource: "eip-cve-controller:phone",
-    },
-    {
-      archive: "operator.tar", tag: "eip-operator-shell:phone",
-      existing: env.FAKE_EXISTING_OPERATOR_ID, loaded: env.FAKE_LOADED_OPERATOR_ID,
-      report: "id", missing: "0", taggedSource: "eip-operator-shell:loaded",
-    },
-  ];
-  for (const image of images) {
-    const loadedSource = image.report === "tag" ? image.taggedSource : image.loaded;
-    if (command === `${docker} image inspect --format '{{.Id}}' ${image.tag}`) {
-      if (image.missing === "1") process.exit(1);
-      process.stdout.write(`${image.existing}\n`);
-      return;
-    }
-    if (command === `${docker} load -i /data/local/tmp/eip-simple-${image.archive}`) {
-      process.stdout.write(image.report === "tag"
-        ? `fixture layer output\nLoaded image: ${loadedSource}\n`
-        : `fixture layer output\nLoaded image ID: ${loadedSource}\n`);
-      return;
-    }
-    if (command === `${docker} image inspect --format '{{.Id}}' ${loadedSource}`) {
-      process.stdout.write(`${image.loaded}\n`);
-      return;
-    }
-    if (command === `${docker} tag ${loadedSource} ${image.tag}`
-        || command === `rm -f /data/local/tmp/eip-simple-${image.archive}`) return;
+  if (command === "test -x /data/docker/bin/docker && test -f /data/docker/disk.img && test -f /data/docker/config/host.conf && test -f /data/eip-cve/container.env && test -x /data/eip-cve-ops/eip-hostctl.sh && pm path com.exploitintel.forgecontrol >/dev/null") {
+    process.exit(env.FAKE_EXISTING_INSTALL === "1" ? 0 : 1);
   }
+  const docker = "DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker";
+  const controllerRef = `ghcr.io/exploitintel/eip-pixel11xl-forge-controller@sha256:${"a".repeat(64)}`;
+  const operatorRef = `ghcr.io/exploitintel/eip-pixel11xl-forge-operator@sha256:${"b".repeat(64)}`;
+  if (command === `${docker} pull ${controllerRef}` || command === `${docker} pull ${operatorRef}`) return;
+  if (command === `${docker} image inspect --format '{{.Id}}' ${controllerRef}`) {
+    process.stdout.write(`${env.FAKE_LOADED_CONTROLLER_ID}\n`);
+    return;
+  }
+  if (command === `${docker} image inspect --format '{{.Id}}' ${operatorRef}`) {
+    process.stdout.write(`${env.FAKE_LOADED_OPERATOR_ID}\n`);
+    return;
+  }
+  if (command === `${docker} tag ${controllerRef} eip-cve-controller:local`
+      || command === `${docker} tag ${controllerRef} eip-cve-controller:phone`
+      || command === `${docker} tag ${operatorRef} eip-operator-shell:phone`
+      || command === `${docker} tag ${operatorRef} eip-operator-shell:candidate`) return;
   if (command === `${docker} info >/dev/null 2>&1`) {
     if (!fs.existsSync(env.FAKE_DOCKER_RUNNING)) process.exit(1);
     return;
@@ -243,9 +251,13 @@ async function fakeToolMain() {
   const prefixes = [
     "sed -i 's/^DISK_SIZE_BYTES=", "mkdir -p /data/docker/lib /data/docker/run;",
     "if ! grep -q \" /data/docker/lib ext4 \"", "echo 1 > /proc/sys/net/ipv4/ip_forward;",
-    "DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker image inspect ",
     "DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker pull tonistiigi/binfmt@sha256:",
     "rm -rf /data/eip-cve-src /data/eip-cve-ops;",
+    "configured=$(sed -n \"s/^DISK_SIZE_BYTES=//p\"",
+    "rm -rf /data/local/tmp/eip-source-ops-",
+    "chmod 0700 /data/local/tmp/eip-source-ops-",
+    "/data/local/tmp/eip-source-ops-",
+    "/data/eip-cve-backups/deploy-",
     "chmod 700 /data/local/tmp/eip-ksu-grant-profile;",
     "/data/local/tmp/eip-ksud boot-patch --boot /data/local/tmp/eip-ksu-init-boot.img ",
   ];
@@ -260,14 +272,23 @@ function fixture(t) {
   fs.mkdirSync(bin);
   fs.mkdirSync(payload);
   for (const name of ["host-module.zip", "docker-engine.tgz", "kernel.lz4", "stock-boot.img",
-    "ksu-init-boot.img", "ksu-manager.apk", "ksu-grant-profile", "controller.tar",
-    "operator.tar", "forge-control.apk", "forge-source.tar", "forge.lock", "ops.tar"]) {
+    "ksu-init-boot.img", "ksu-manager.apk", "ksu-grant-profile", "forge-control.apk",
+    "forge-source.tar", "forge.lock", "ops.tar", "source-ops.tar", "source-ops.txt",
+    "install-source-ops-phone.sh", "restore-source-ops-phone.sh", "deployment-manifest.json"]) {
     fs.writeFileSync(path.join(payload, name), "inert installer test payload\n");
   }
+  fs.writeFileSync(path.join(payload, "redeploy.sh"),
+    '#!/bin/bash\nprintf "%s\\n" "$*" >"$FAKE_REDEPLOY_ARGS"\ntouch "$FAKE_STARTED"\n', { mode: 0o755 });
   const controllerConfig = `sha256:${"d".repeat(64)}`;
   const operatorConfig = `sha256:${"e".repeat(64)}`;
   fs.writeFileSync(path.join(payload, "forge.lock"),
-    `CONTROLLER_CONFIG_SHA256=${controllerConfig.slice("sha256:".length)}\n`
+    "LOCK_VERSION=2\n"
+    + `PIXEL_REVISION=${"4".repeat(40)}\n`
+    + `FORGE_REVISION=${"5".repeat(40)}\n`
+    + `FORGE_SOURCE_SHA256=${"f".repeat(64)}\n`
+    + `CONTROLLER_IMAGE=ghcr.io/exploitintel/eip-pixel11xl-forge-controller@sha256:${"a".repeat(64)}\n`
+    + `CONTROLLER_CONFIG_SHA256=${controllerConfig.slice("sha256:".length)}\n`
+    + `OPERATOR_IMAGE=ghcr.io/exploitintel/eip-pixel11xl-forge-operator@sha256:${"b".repeat(64)}\n`
     + `OPERATOR_CONFIG_SHA256=${operatorConfig.slice("sha256:".length)}\n`);
   const script = path.join(root, "install.sh");
   fs.copyFileSync(installer, script);
@@ -296,13 +317,12 @@ function fixture(t) {
     FAKE_DELAY_RELEASE: "", FAKE_DELAY_READY: "",
     FAKE_STARTED: path.join(root, "started"), FAKE_UI_STARTED: path.join(root, "ui-started"),
     FAKE_DOCKER_RUNNING: dockerRunning, FAKE_STATUS_MODE: "ready", FAKE_UI_STATUS_MODE: "ready",
-    FAKE_LOAD_IMAGE: "0",
+    FAKE_EXISTING_INSTALL: "0",
+    FAKE_PARK_PENDING: path.join(root, "park-pending"), FAKE_PARKED: path.join(root, "parked"),
+    FAKE_REDEPLOY_ARGS: path.join(root, "redeploy-args"),
     FAKE_FORGE_STATE_EXISTS: "1",
-    FAKE_EXISTING_CONTROLLER_ID: controllerConfig,
     FAKE_LOADED_CONTROLLER_ID: controllerConfig,
-    FAKE_EXISTING_OPERATOR_ID: operatorConfig,
     FAKE_LOADED_OPERATOR_ID: operatorConfig,
-    FAKE_LOAD_REPORT: "id",
     FAKE_BAD_PAYLOAD: "",
     FAKE_ROOT_AVAILABLE: "1",
     FAKE_SHELL_ROOT_SIZE: "8388608",
@@ -321,7 +341,7 @@ function fixture(t) {
 
 test("installer defaults only new Forge state to Ollama.com", (t) => {
   const existing = fixture(t);
-  const existingResult = existing.run();
+  const existingResult = existing.run([], { FAKE_EXISTING_INSTALL: "1" });
   assert.equal(existingResult.status, 0, existingResult.stderr);
   assert.ok(!existing.calls().some((call) => call.command === "/data/eip-cve-ops/set-ollama.sh https://ollama.com"));
 
@@ -335,26 +355,26 @@ test("installer defaults only new Forge state to Ollama.com", (t) => {
     "fresh installs must apply the Pixel cloud default after Forge bootstrap");
 });
 
-test("installer replaces a stale existing controller image", (t) => {
+test("installer pulls the locked controller digest and tags its verified config", (t) => {
   const item = fixture(t);
-  const result = item.run([], { FAKE_EXISTING_CONTROLLER_ID: `sha256:${"c".repeat(64)}` });
+  const result = item.run();
   assert.equal(result.status, 0, result.stderr);
   const commands = item.calls().map((call) => call.command).filter(Boolean);
   assert.ok(commands.includes("DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker "
-    + "load -i /data/local/tmp/eip-simple-controller.tar"));
+    + `pull ghcr.io/exploitintel/eip-pixel11xl-forge-controller@sha256:${"a".repeat(64)}`));
   assert.ok(commands.includes("DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker "
-    + `tag sha256:${"d".repeat(64)} eip-cve-controller:local`));
+    + `tag ghcr.io/exploitintel/eip-pixel11xl-forge-controller@sha256:${"a".repeat(64)} eip-cve-controller:local`));
 });
 
-test("installer replaces a stale existing operator image", (t) => {
+test("installer pulls the locked operator digest and tags its verified config", (t) => {
   const item = fixture(t);
-  const result = item.run([], { FAKE_EXISTING_OPERATOR_ID: `sha256:${"c".repeat(64)}` });
+  const result = item.run();
   assert.equal(result.status, 0, result.stderr);
   const commands = item.calls().map((call) => call.command).filter(Boolean);
   assert.ok(commands.includes("DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker "
-    + "load -i /data/local/tmp/eip-simple-operator.tar"));
+    + `pull ghcr.io/exploitintel/eip-pixel11xl-forge-operator@sha256:${"b".repeat(64)}`));
   assert.ok(commands.includes("DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker "
-    + `tag sha256:${"e".repeat(64)} eip-operator-shell:phone`));
+    + `tag ghcr.io/exploitintel/eip-pixel11xl-forge-operator@sha256:${"b".repeat(64)} eip-operator-shell:phone`));
 });
 
 test("installer rebases managed skills after the new WebUI starts and before chat", (t) => {
@@ -365,11 +385,9 @@ test("installer rebases managed skills after the new WebUI starts and before cha
   const ui = commands.indexOf("/data/eip-cve-ops/eip.sh up --force-recreate --no-deps ui");
   const release = commands.indexOf("/data/eip-cve-ops/eip.sh skills-release");
   const fullStart = commands.indexOf("/data/eip-cve-ops/eip-hostctl.sh start");
-  const park = commands.indexOf("/data/eip-cve-ops/eip-hostctl.sh park");
-  const dockerRestart = commands.indexOf(
-    "setsid sh /data/docker/bin/dockerd.sh --runtime-only </dev/null >/dev/null 2>&1 &");
-  assert.ok(park >= 0 && dockerRestart > park && ui > dockerRestart && release > ui && fullStart > release,
-    "Docker must restart after park and managed skills must release before chat starts");
+  const source = commands.findIndex((command) => command.startsWith("rm -rf /data/eip-cve-src"));
+  assert.ok(source >= 0 && ui > source && release > ui && fullStart > release,
+    "fresh source must be installed before UI and managed skills must release before chat starts");
 });
 
 test("installer cleans up an unready candidate WebUI so the update can be retried", (t) => {
@@ -394,44 +412,61 @@ test("installer cleans up a failed managed-skills release before full start", (t
   assert.ok(!commands.includes("/data/eip-cve-ops/eip-hostctl.sh start"));
 });
 
-test("installer refuses a controller archive with the wrong loaded image ID", (t) => {
+test("installer refuses a controller pull with the wrong config ID", (t) => {
   const item = fixture(t);
   const result = item.run([], {
     FAKE_EXISTING_CONTROLLER_ID: `sha256:${"c".repeat(64)}`,
     FAKE_LOADED_CONTROLLER_ID: `sha256:${"a".repeat(64)}`,
   });
   assert.equal(result.status, 1, result.stderr);
-  assert.match(result.stderr, /controller\.tar loaded the wrong image ID/);
+  assert.match(result.stderr, /controller:local downloaded the wrong image ID/);
   const commands = item.calls().map((call) => call.command).filter(Boolean);
   assert.ok(!commands.some((command) => command.includes("docker tag")));
   expectNoCompletion(result, item.calls());
 });
 
-test("installer refuses an operator archive with the wrong loaded image ID", (t) => {
+test("installer refuses an operator pull with the wrong config ID", (t) => {
   const item = fixture(t);
   const result = item.run([], {
     FAKE_EXISTING_OPERATOR_ID: `sha256:${"c".repeat(64)}`,
     FAKE_LOADED_OPERATOR_ID: `sha256:${"a".repeat(64)}`,
   });
   assert.equal(result.status, 1, result.stderr);
-  assert.match(result.stderr, /operator\.tar loaded the wrong image ID/);
+  assert.match(result.stderr, /operator-shell:phone downloaded the wrong image ID/);
   const commands = item.calls().map((call) => call.command).filter(Boolean);
-  assert.ok(!commands.some((command) => command.includes("docker tag")));
+  assert.ok(!commands.some((command) => command.endsWith(" eip-operator-shell:phone")));
   expectNoCompletion(result, item.calls());
 });
 
-test("installer verifies the tagged image form emitted by the release controller archive", (t) => {
+test("existing-install update preserves the disk and uses the transactional release path", (t) => {
   const item = fixture(t);
-  const result = item.run([], {
-    FAKE_EXISTING_CONTROLLER_ID: `sha256:${"c".repeat(64)}`,
-    FAKE_LOAD_REPORT: "tag",
-  });
+  const result = item.run([], { FAKE_EXISTING_INSTALL: "1" });
   assert.equal(result.status, 0, result.stderr);
   const commands = item.calls().map((call) => call.command).filter(Boolean);
   assert.ok(commands.includes("DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker "
-    + "image inspect --format '{{.Id}}' eip-cve-controller:phone"));
+    + `tag ghcr.io/exploitintel/eip-pixel11xl-forge-controller@sha256:${"a".repeat(64)} eip-cve-controller:phone`));
   assert.ok(commands.includes("DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker "
-    + "tag eip-cve-controller:phone eip-cve-controller:local"));
+    + `tag ghcr.io/exploitintel/eip-pixel11xl-forge-operator@sha256:${"b".repeat(64)} eip-operator-shell:candidate`));
+  assert.ok(commands.includes("/data/eip-cve-ops/eip-hostctl.sh park-when-idle"));
+  const park = commands.indexOf("/data/eip-cve-ops/eip-hostctl.sh reconcile");
+  const restart = commands.lastIndexOf("setsid sh /data/docker/bin/dockerd.sh --runtime-only </dev/null >/dev/null 2>&1 &");
+  assert.ok(restart > park, "Docker must restart after Forge reaches its parked state");
+  assert.ok(commands.some((command) => command?.startsWith("/data/local/tmp/eip-source-ops-")));
+  assert.ok(!commands.some((command) => command?.startsWith("sed -i 's/^DISK_SIZE_BYTES=")));
+  assert.ok(!commands.some((command) => command?.startsWith("rm -rf /data/eip-cve-src")));
+  assert.match(fs.readFileSync(item.env.FAKE_REDEPLOY_ARGS, "utf8"), /--parked/);
+});
+
+test("existing-install update does not require fresh-install firmware or host payloads", (t) => {
+  const item = fixture(t);
+  for (const name of ["host-module.zip", "docker-engine.tgz", "kernel.lz4", "stock-boot.img",
+    "ksu-init-boot.img", "ksu-manager.apk", "ksu-grant-profile"]) {
+    fs.rmSync(path.join(item.root, "payload", name));
+  }
+  const result = item.run([], { FAKE_EXISTING_INSTALL: "1" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!item.calls().some((call) => call.tool === "fastboot"));
+  assert.equal(result.stdout.trim().split("\n").at(-1), "READY");
 });
 
 async function runUntilHeartbeat(item, overrides, heartbeat) {
@@ -460,7 +495,7 @@ async function runUntilHeartbeat(item, overrides, heartbeat) {
       }
     }
   });
-  const timeout = setTimeout(() => { timedOut = true; killGroup(); }, 15_000);
+  const timeout = setTimeout(() => { timedOut = true; killGroup(); }, 30_000);
   const result = await new Promise((resolve, reject) => {
     child.on("error", reject);
     child.on("close", (status, signal) => resolve({ status, signal, stdout, stderr }));
@@ -554,7 +589,8 @@ test("installer rejects a changed bootstrap payload before contacting the phone"
     const result = item.run([], { FAKE_BAD_PAYLOAD: name });
     assert.equal(result.status, 1, `${name}: ${result.stderr}`);
     assert.match(result.stderr, message);
-    assert.ok(!item.calls().some((call) => call.tool === "adb" || call.tool === "fastboot"));
+    assert.ok(!item.calls().some((call) => call.tool === "fastboot"));
+    assert.ok(!item.calls().some((call) => call.tool === "adb" && call.verb === "push"));
   }
 });
 
@@ -628,22 +664,19 @@ test("quiet stages emit a 15-second heartbeat on stderr while stdout stays machi
   assert.equal(result.stdout.trim().split("\n").at(-1), "READY");
 });
 
-test("delayed image load keeps heartbeat out of captured output and tags the reported image", async (t) => {
+test("delayed image pull keeps heartbeat out of captured output", async (t) => {
   const item = fixture(t);
   const result = await runUntilHeartbeat(item, {
-    FAKE_LOAD_IMAGE: "1", FAKE_DELAY_MATCH: "docker load -i",
-  }, /Still working:[^\n]*Loading controller\.tar/);
+    FAKE_DELAY_MATCH: "pull ghcr.io/exploitintel/eip-pixel11xl-forge-controller@",
+  }, /Still working:[^\n]*Downloading eip-cve-controller:local/);
   assert.equal(result.status, 0, result.stderr);
   const commands = item.calls().map((call) => call.command).filter(Boolean);
-  const loadIndex = commands.findIndex((command) => command.includes("docker load -i "));
-  const cleanupIndex = commands.indexOf("rm -f /data/local/tmp/eip-simple-controller.tar");
-  const tagIndex = commands.indexOf("DOCKER_HOST=unix:///data/docker/run/docker.sock "
-    + `/data/docker/bin/docker tag sha256:${"d".repeat(64)} eip-cve-controller:local`);
-  assert.ok(loadIndex >= 0 && cleanupIndex > loadIndex && tagIndex > cleanupIndex,
-    "missing image must be loaded, its transfer cleaned, and its reported ID tagged in order");
+  const pullIndex = commands.findIndex((command) => command.includes("pull ghcr.io/exploitintel/eip-pixel11xl-forge-controller@"));
+  const tagIndex = commands.findIndex((command) => command.includes(" eip-cve-controller:local"));
+  assert.ok(pullIndex >= 0 && tagIndex > pullIndex, "the verified digest pull must precede its local tag");
   assert.ok(item.calls().some((call) => call.event === "delay-started"));
-  assert.match(result.stderr, /Still working:[^\n]*Loading controller\.tar/);
-  assert.doesNotMatch(result.stdout, /Still working:|Loaded image ID:|fixture layer output|^\[\d+m\d+s\]/m);
+  assert.match(result.stderr, /Still working:[^\n]*Downloading eip-cve-controller:local/);
+  assert.doesNotMatch(result.stdout, /Still working:|^\[\d+m\d+s\]/m);
   assert.equal(result.stdout.trim().split("\n").at(-1), "READY");
 });
 
@@ -658,7 +691,7 @@ test("readiness exhaustion and failed status commands retain diagnostics without
     assert.doesNotMatch(result.stdout, /^READY$/m);
     const calls = item.calls();
     assert.equal(calls.filter((call) => call.command === "/data/eip-cve-ops/eip-hostctl.sh status").length,
-      62, "readiness must stop after the pre-install status, UI check, and fixed 60 attempts");
+      61, "readiness must stop after the UI check and fixed 60 attempts");
     assert.ok(calls.some((call) => call.verb === "install"), "fixture must reach app installation");
     assert.ok(calls.some((call) => call.command === "/data/eip-cve-ops/eip-hostctl.sh start"));
     assert.ok(calls.some((call) => call.command === "/data/eip-cve-ops/eip-hostctl.sh logs"));

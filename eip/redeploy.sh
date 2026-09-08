@@ -5,18 +5,29 @@
 # transactionally and restored if the candidate fails.
 set -euo pipefail
 
-ADB=$HOME/Library/Android/sdk/platform-tools/adb
+if [[ -n "${ADB:-}" ]]; then
+  ADB_BIN=$ADB
+elif command -v adb >/dev/null 2>&1; then
+  ADB_BIN=$(command -v adb)
+else
+  ADB_BIN=$HOME/Library/Android/sdk/platform-tools/adb
+fi
 PHONE_DOCKER='DOCKER_HOST=unix:///data/docker/run/docker.sock /data/docker/bin/docker'
 PHONE_EIP=/data/eip-cve-ops/eip.sh
+PHONE_HOSTCTL=/data/eip-cve-ops/eip-hostctl.sh
 CONTROLLER_TAG=eip-cve-controller:phone
 ACTIVE_TAG=eip-cve-controller:local
 ROLLBACK_TAG=eip-cve-controller:rollback
+OPERATOR_CANDIDATE_TAG=eip-operator-shell:candidate
+OPERATOR_ACTIVE_TAG=eip-operator-shell:phone
+OPERATOR_ROLLBACK_TAG=eip-operator-shell:rollback
 POLL_ATTEMPTS=30
 POLL_INTERVAL_SECONDS=5
 ROLLBACK_ARMED=false
+PARKED_BASELINE=false
 
 usage() {
-  printf '%s\n' 'usage: redeploy.sh --serial ADB_SERIAL --manifest CONTROLLER_BUILD.json'
+  printf '%s\n' 'usage: redeploy.sh --serial ADB_SERIAL --manifest CONTROLLER_BUILD.json [--parked]'
 }
 
 die() {
@@ -32,6 +43,7 @@ MANIFEST=
 MANIFEST_SEEN=false
 SERIAL=
 SERIAL_SEEN=false
+PARKED_SEEN=false
 while (($# > 0)); do
   case "$1" in
     --manifest)
@@ -47,6 +59,12 @@ while (($# > 0)); do
       SERIAL=$2
       SERIAL_SEEN=true
       shift 2
+      ;;
+    --parked)
+      "$PARKED_SEEN" && die '--parked may be specified only once'
+      PARKED_BASELINE=true
+      PARKED_SEEN=true
+      shift
       ;;
     --help|-h)
       usage
@@ -71,7 +89,7 @@ done
   die 'DOCKER_HOST must be unset; redeploy uses the phone candidate and phone Unix socket directly'
 
 command -v python3 >/dev/null 2>&1 || die 'python3 is unavailable'
-[[ -x "$ADB" ]] || die "adb is missing or not executable: $ADB"
+[[ -x "$ADB_BIN" ]] || die "adb is missing or not executable: $ADB_BIN"
 
 read_manifest() {
   python3 - "$1" <<'PY'
@@ -97,8 +115,8 @@ if manifest.get("kind") != "eip-controller-build-manifest":
     reject("kind is not eip-controller-build-manifest")
 if manifest.get("provenanceLevel") != "source-attributed":
     reject("provenanceLevel is not source-attributed")
-if manifest.get("scope") != "controller-only":
-    reject("scope is not controller-only")
+if manifest.get("scope") not in ("controller-only", "release-images"):
+    reject("scope is unsupported")
 if manifest.get("platform") != "linux/arm64":
     reject("platform is not linux/arm64")
 
@@ -123,11 +141,22 @@ if not isinstance(controller.get("sourceSnapshotDigest"), str) or not digest_pat
 image_id = controller.get("imageId")
 if not isinstance(image_id, str) or not digest_pattern.fullmatch(image_id):
     reject("controller imageId is malformed")
+operator = manifest.get("operator")
+operator_id = ""
+if operator is not None:
+    if manifest.get("scope") != "release-images" or not isinstance(operator, dict):
+        reject("operator requires release-images scope")
+    if operator.get("tag") != "eip-operator-shell:candidate":
+        reject("operator tag is not eip-operator-shell:candidate")
+    operator_id = operator.get("imageId")
+    if not isinstance(operator_id, str) or not digest_pattern.fullmatch(operator_id):
+        reject("operator imageId is malformed")
 print("\t".join([
     image_id,
     controller["sourceRevision"],
     builder["revision"],
     controller["sourceSnapshotDigest"],
+    operator_id,
 ]))
 PY
 }
@@ -142,7 +171,7 @@ phone() {
   local quoted_command
 
   quoted_command=${command//\'/\'\\\'\'}
-  "$ADB" -s "$SERIAL" shell -T "su -c '$quoted_command'"
+  "$ADB_BIN" -s "$SERIAL" shell -T "su -c '$quoted_command'"
 }
 
 phone_image_id() {
@@ -245,6 +274,24 @@ rollback_previous() {
     printf 'redeploy: source and operations restore returned nonzero, but its exact postcondition is present\n' >&2
   fi
 
+  if "$OPERATOR_CHANGE"; then
+    step "restoring $PREVIOUS_OPERATOR_ID as $OPERATOR_ACTIVE_TAG"
+    local operator_restore_failed=false restored_operator_id
+    phone "$PHONE_DOCKER tag $PREVIOUS_OPERATOR_ID $OPERATOR_ACTIVE_TAG" || \
+      operator_restore_failed=true
+    restored_operator_id=$(phone_image_id "$OPERATOR_ACTIVE_TAG") || {
+      printf 'redeploy: rollback failed: could not inspect the restored operator tag\n' >&2
+      return 1
+    }
+    if ! normalize_id "$restored_operator_id" || [[ "$NORMALIZED_ID" != "$PREVIOUS_OPERATOR_ID" ]]; then
+      printf 'redeploy: rollback failed: operator tag does not resolve to the previous image\n' >&2
+      return 1
+    fi
+    if "$operator_restore_failed"; then
+      printf 'redeploy: operator restore returned nonzero, but its exact postcondition is present\n' >&2
+    fi
+  fi
+
   step "restoring $PREVIOUS_IMAGE_ID as $ACTIVE_TAG"
   local restore_command_failed=false
   phone "$PHONE_DOCKER tag $PREVIOUS_IMAGE_ID $ACTIVE_TAG" || \
@@ -263,9 +310,16 @@ rollback_previous() {
     printf 'redeploy: rollback restore command returned nonzero, but its exact postcondition is present\n' >&2
   fi
 
-  if ! phone "$PHONE_EIP up --force-recreate"; then
-    printf 'redeploy: rollback failed: previous stack recreation failed\n' >&2
-    return 1
+  if "$PARKED_BASELINE"; then
+    if ! phone "$PHONE_HOSTCTL start"; then
+      printf 'redeploy: rollback failed: normal lifecycle could not restart the previous stack\n' >&2
+      return 1
+    fi
+  else
+    if ! phone "$PHONE_EIP up --force-recreate"; then
+      printf 'redeploy: rollback failed: previous stack recreation failed\n' >&2
+      return 1
+    fi
   fi
   if ! wait_for_services "$PREVIOUS_IMAGE_ID"; then
     printf 'redeploy: rollback failed: ui and chat are not healthy on the previous image\n' >&2
@@ -316,12 +370,17 @@ trap 'interrupted HUP 129' HUP
 trap 'interrupted INT 130' INT
 trap 'interrupted TERM 143' TERM
 
-if ! IFS=$'\t' read -r CANDIDATE_ID SOURCE_REVISION BUILDER_REVISION SOURCE_SNAPSHOT_DIGEST \
+if ! IFS=$'\t' read -r CANDIDATE_ID SOURCE_REVISION BUILDER_REVISION SOURCE_SNAPSHOT_DIGEST OPERATOR_CANDIDATE_ID \
   < <(read_manifest "$MANIFEST"); then
   die 'build manifest validation failed'
 fi
 [[ -n "$CANDIDATE_ID" && -n "$SOURCE_REVISION" && -n "$BUILDER_REVISION" \
   && -n "$SOURCE_SNAPSHOT_DIGEST" ]] || die 'build manifest validation failed'
+HAS_OPERATOR=false
+OPERATOR_CHANGE=false
+if [[ -n "$OPERATOR_CANDIDATE_ID" ]]; then
+  HAS_OPERATOR=true
+fi
 SOURCE_OPS_TRANSACTION=/data/eip-cve-backups/deploy-$SOURCE_REVISION-$BUILDER_REVISION
 SOURCE_OPS_RESTORE=$SOURCE_OPS_TRANSACTION/restore-source-ops.sh
 MANAGED_TRANSACTION_ID=${CANDIDATE_ID#sha256:}
@@ -350,13 +409,39 @@ PREVIOUS_IMAGE_ID=$NORMALIZED_ID
 [[ "$PREVIOUS_IMAGE_ID" != "$CANDIDATE_ID" ]] || \
   die 'candidate image is already active; refusing to replay its deployment transaction'
 
-step 'proving the current ui and chat baseline before tag changes'
-CURRENT_UI_READY=false
-CURRENT_CHAT_READY=false
-service_observation ui "$PREVIOUS_IMAGE_ID" && CURRENT_UI_READY=true
-service_observation chat "$PREVIOUS_IMAGE_ID" && CURRENT_CHAT_READY=true
-if ! "$CURRENT_UI_READY" || ! "$CURRENT_CHAT_READY"; then
-  die 'current ui and chat must both be healthy on the previous controller image before redeploy'
+if "$HAS_OPERATOR"; then
+  PHONE_OPERATOR_CANDIDATE_ID=$(phone_image_id "$OPERATOR_CANDIDATE_TAG") || \
+    die 'cannot inspect the candidate operator image on the phone'
+  normalize_id "$PHONE_OPERATOR_CANDIDATE_ID" || die 'phone candidate operator image ID is malformed'
+  [[ "$NORMALIZED_ID" == "$OPERATOR_CANDIDATE_ID" ]] || \
+    die 'phone candidate operator image does not match the build manifest'
+  PREVIOUS_OPERATOR_ID=$(phone_image_id "$OPERATOR_ACTIVE_TAG") || \
+    die "cannot resolve the current $OPERATOR_ACTIVE_TAG image on the phone"
+  normalize_id "$PREVIOUS_OPERATOR_ID" || die 'current phone operator image ID is malformed'
+  PREVIOUS_OPERATOR_ID=$NORMALIZED_ID
+  if [[ "$PREVIOUS_OPERATOR_ID" != "$OPERATOR_CANDIDATE_ID" ]]; then
+    OPERATOR_CHANGE=true
+  fi
+fi
+
+if "$PARKED_BASELINE"; then
+  step 'proving the maintenance-parked baseline before tag changes'
+  # shellcheck disable=SC2016 # The substitution is evaluated by Android's shell.
+  phone 'test "$(cat /data/docker/eip-cve-control/maintenance-v1 2>/dev/null)" = EIP_CVE_MAINTENANCE_V1' || \
+    die 'parked redeploy requires active maintenance admission'
+  PARKED_UI=$(phone "$PHONE_EIP ps -q ui" 2>/dev/null) || die 'cannot inspect parked UI state'
+  PARKED_CHAT=$(phone "$PHONE_EIP ps -q chat" 2>/dev/null) || die 'cannot inspect parked chat state'
+  [[ -z "${PARKED_UI//$'\r'/}" && -z "${PARKED_CHAT//$'\r'/}" ]] || \
+    die 'parked redeploy requires ui and chat to be stopped'
+else
+  step 'proving the current ui and chat baseline before tag changes'
+  CURRENT_UI_READY=false
+  CURRENT_CHAT_READY=false
+  service_observation ui "$PREVIOUS_IMAGE_ID" && CURRENT_UI_READY=true
+  service_observation chat "$PREVIOUS_IMAGE_ID" && CURRENT_CHAT_READY=true
+  if ! "$CURRENT_UI_READY" || ! "$CURRENT_CHAT_READY"; then
+    die 'current ui and chat must both be healthy on the previous controller image before redeploy'
+  fi
 fi
 
 step "retaining $PREVIOUS_IMAGE_ID as $ROLLBACK_TAG"
@@ -371,11 +456,23 @@ normalize_id "$ROLLBACK_IMAGE_ID" || die 'rollback controller image ID is malfor
 if "$ROLLBACK_TAG_COMMAND_FAILED"; then
   printf 'redeploy: rollback-tag command returned nonzero, but its exact postcondition is present\n' >&2
 fi
+if "$OPERATOR_CHANGE"; then
+  step "retaining $PREVIOUS_OPERATOR_ID as $OPERATOR_ROLLBACK_TAG"
+  phone "$PHONE_DOCKER tag $PREVIOUS_OPERATOR_ID $OPERATOR_ROLLBACK_TAG" || \
+    die 'cannot retain the previous operator image; active tags were not changed'
+  OPERATOR_ROLLBACK_ID=$(phone_image_id "$OPERATOR_ROLLBACK_TAG") || \
+    die 'cannot verify the operator rollback tag; active tags were not changed'
+  normalize_id "$OPERATOR_ROLLBACK_ID" || die 'operator rollback image ID is malformed'
+  [[ "$NORMALIZED_ID" == "$PREVIOUS_OPERATOR_ID" ]] || \
+    die 'operator rollback tag does not retain the previous image; active tags were not changed'
+fi
 ROLLBACK_ARMED=true
 
-step 'stopping the previous stack before the managed-skills snapshot'
-if ! phone "$PHONE_EIP down"; then
-  candidate_failed 'previous stack stop failed'
+if ! "$PARKED_BASELINE"; then
+  step 'stopping the previous stack before the managed-skills snapshot'
+  if ! phone "$PHONE_EIP down"; then
+    candidate_failed 'previous stack stop failed'
+  fi
 fi
 
 step 'preserving the exact pre-release managed-skills tree'
@@ -392,6 +489,18 @@ else
 fi
 if "$MANAGED_PREPARE_COMMAND_FAILED"; then
   printf 'redeploy: managed-skills snapshot returned nonzero, but its exact postcondition is present\n' >&2
+fi
+
+if "$OPERATOR_CHANGE"; then
+  step "promoting $OPERATOR_CANDIDATE_ID as $OPERATOR_ACTIVE_TAG"
+  if ! phone "$PHONE_DOCKER tag $OPERATOR_CANDIDATE_ID $OPERATOR_ACTIVE_TAG"; then
+    candidate_failed 'candidate operator promotion command returned nonzero'
+  fi
+  PROMOTED_OPERATOR_ID=$(phone_image_id "$OPERATOR_ACTIVE_TAG") || \
+    candidate_failed 'cannot inspect the promoted operator image'
+  if ! normalize_id "$PROMOTED_OPERATOR_ID" || [[ "$NORMALIZED_ID" != "$OPERATOR_CANDIDATE_ID" ]]; then
+    candidate_failed 'active operator tag does not resolve to the manifest image'
+  fi
 fi
 
 step "promoting $CANDIDATE_ID as $ACTIVE_TAG"
@@ -434,6 +543,19 @@ if ! wait_for_services "$CANDIDATE_ID"; then
 fi
 if ! phone "$SOURCE_OPS_RESTORE check-pending $SOURCE_REVISION $BUILDER_REVISION $SOURCE_SNAPSHOT_DIGEST"; then
   candidate_failed 'source and operations transaction changed during deployment'
+fi
+
+if "$PARKED_BASELINE"; then
+  step 'reopening admission through the normal host lifecycle'
+  if ! phone "$PHONE_HOSTCTL start"; then
+    candidate_failed 'normal post-maintenance Forge start failed'
+  fi
+  FINAL_STATUS=$(phone "$PHONE_HOSTCTL status" 2>/dev/null) || \
+    candidate_failed 'cannot read normal post-maintenance Forge status'
+  FINAL_STATUS=${FINAL_STATUS//$'\r'/}
+  if ! grep -qx 'system=ready' <<< "$FINAL_STATUS"; then
+    candidate_failed 'normal post-maintenance Forge readiness was not proved'
+  fi
 fi
 
 step 'finalizing the one-shot source and operations transaction'

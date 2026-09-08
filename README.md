@@ -101,10 +101,26 @@ immediately before `READY`. Save the password for future logins.
 
 Open the Forge Control app on the phone, then tap **Open Forge WebUI**.
 
+## Update an existing installation
+
+Download and extract the latest installer bundle, connect the already
+installed phone over USB, and run the same command:
+
+```sh
+./install.sh --serial ADB_SERIAL
+```
+
+The installer recognizes the existing system, downloads the exact public
+controller and operator image digests over the phone's Wi-Fi connection, waits
+for current Forge work to become idle, and updates with rollback. It preserves
+the Docker disk, Forge state, WebUI password, provider keys, and CVE data. Do
+not run `prepare-firmware.sh`, `--wipe`, or `--disk-gib` for an update.
+
 ## What gets installed
 
 - the matched Pixel kernel and native Docker host;
-- the controller image built from the pinned public Forge commit;
+- the controller image built from the pinned public Forge commit, pulled from
+  GHCR by immutable digest;
 - the Pixel operator image and phone operations;
 - Forge Control for starting, parking, and inspecting the system; and
 - the Forge WebUI and agent-chat service.

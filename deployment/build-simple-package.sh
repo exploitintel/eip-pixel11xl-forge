@@ -8,8 +8,7 @@ usage: build-simple-package.sh \
   --module ZIP \
   --kernel IMAGE \
   --ksu-grant-helper FILE \
-  --controller TAR \
-  --operator TAR \
+  --image-lock FILE \
   --apk APK \
   [--engine TGZ] \
   [--ksu-apk APK] \
@@ -31,8 +30,7 @@ STOCK_BOOT=
 KSU_INIT_BOOT=
 KSU_APK=
 KSU_GRANT_HELPER=
-CONTROLLER=
-OPERATOR=
+IMAGE_LOCK=
 APK=
 OUTPUT=
 
@@ -46,8 +44,7 @@ while (($#)); do
     --ksu-init-boot) KSU_INIT_BOOT=${2:-}; shift 2 ;;
     --ksu-apk) KSU_APK=${2:-}; shift 2 ;;
     --ksu-grant-helper) KSU_GRANT_HELPER=${2:-}; shift 2 ;;
-    --controller) CONTROLLER=${2:-}; shift 2 ;;
-    --operator) OPERATOR=${2:-}; shift 2 ;;
+    --image-lock) IMAGE_LOCK=${2:-}; shift 2 ;;
     --apk) APK=${2:-}; shift 2 ;;
     --output) OUTPUT=${2:-}; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -55,7 +52,7 @@ while (($#)); do
   esac
 done
 
-for value in FORGE_SOURCE MODULE KERNEL KSU_GRANT_HELPER CONTROLLER OPERATOR APK OUTPUT; do
+for value in FORGE_SOURCE MODULE KERNEL KSU_GRANT_HELPER IMAGE_LOCK APK OUTPUT; do
   [[ -n "${!value}" ]] || die "missing --${value,,}"
 done
 if [[ -n "$STOCK_BOOT" || -n "$KSU_INIT_BOOT" ]]; then
@@ -63,7 +60,7 @@ if [[ -n "$STOCK_BOOT" || -n "$KSU_INIT_BOOT" ]]; then
     die '--stock-boot and --ksu-init-boot must be supplied together'
 fi
 [[ -d "$FORGE_SOURCE" ]] || die "Forge source is not a directory: $FORGE_SOURCE"
-for file in "$MODULE" "$KERNEL" "$KSU_GRANT_HELPER" "$CONTROLLER" "$OPERATOR" "$APK"; do
+for file in "$MODULE" "$KERNEL" "$KSU_GRANT_HELPER" "$IMAGE_LOCK" "$APK"; do
   [[ -f "$file" ]] || die "file is missing: $file"
 done
 if [[ -n "$ENGINE" ]]; then
@@ -83,7 +80,7 @@ PROJECT_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd -P)
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/eip-simple-package.XXXXXX")
 trap 'rm -rf -- "$WORK"' EXIT
 
-for command in git tar node; do
+for command in git tar python3; do
   command -v "$command" >/dev/null 2>&1 || die "$command is unavailable"
 done
 
@@ -99,9 +96,16 @@ hash_file() {
   HASH=${output%% *}
 }
 
+PIXEL_REVISION=$(git -C "$PROJECT_ROOT" rev-parse --verify HEAD 2>/dev/null) || \
+  die 'cannot resolve Pixel source revision'
+[[ "$PIXEL_REVISION" =~ ^[0-9a-f]{40}$ ]] || die 'Pixel source revision is invalid'
+[[ -z $(git -C "$PROJECT_ROOT" status --porcelain=v1 --untracked-files=all --ignore-submodules=none) ]] || \
+  die 'Pixel source must be clean before package assembly'
 FORGE_REVISION=$(git -C "$FORGE_SOURCE" rev-parse --verify HEAD 2>/dev/null) || \
   die 'cannot resolve Forge source revision'
 [[ "$FORGE_REVISION" =~ ^[0-9a-f]{40}$ ]] || die 'Forge source revision is invalid'
+[[ -z $(git -C "$FORGE_SOURCE" status --porcelain=v1 --untracked-files=all --ignore-submodules=none) ]] || \
+  die 'Forge source must be clean before package assembly'
 PINNED_FORGE_REVISION=$(tr -d '\r\n' < "$PROJECT_ROOT/FORGE_REVISION")
 [[ "$FORGE_REVISION" == "$PINNED_FORGE_REVISION" ]] || \
   die "Forge source must be the pinned revision $PINNED_FORGE_REVISION"
@@ -109,44 +113,51 @@ git -C "$FORGE_SOURCE" archive --format=tar HEAD > "$WORK/forge-source.tar"
 hash_file "$WORK/forge-source.tar"
 FORGE_SOURCE_SHA256=$HASH
 
-CONTROLLER_CONFIG=$(tar -xOf "$CONTROLLER" manifest.json 2>/dev/null | node -e '
-let input = "";
-process.stdin.on("data", chunk => input += chunk).on("end", () => {
-  const manifest = JSON.parse(input);
-  if (!Array.isArray(manifest) || manifest.length !== 1) process.exit(2);
-  process.stdout.write(String(manifest[0].Config || ""));
-});
-') || die 'cannot read controller image manifest'
-[[ "$CONTROLLER_CONFIG" =~ ^blobs/sha256/[0-9a-f]{64}$ ]] || \
-  die 'controller image manifest has an invalid config path'
-# shellcheck disable=SC2016 # JavaScript template interpolation belongs to Node.
-CONTROLLER_LABELS=$(tar -xOf "$CONTROLLER" "$CONTROLLER_CONFIG" 2>/dev/null | node -e '
-let input = "";
-process.stdin.on("data", chunk => input += chunk).on("end", () => {
-  const labels = JSON.parse(input).config?.Labels || {};
-  process.stdout.write(`${labels["org.opencontainers.image.revision"] || ""}|${labels["io.exploitintel.build.source-snapshot-sha256"] || ""}`);
-});
-') || die 'cannot read controller image labels'
-IFS='|' read -r CONTROLLER_REVISION CONTROLLER_SOURCE_SHA256 <<< "$CONTROLLER_LABELS"
-[[ "$CONTROLLER_REVISION" == "$FORGE_REVISION" ]] || \
-  die "controller was built from $CONTROLLER_REVISION, but Forge source is $FORGE_REVISION"
-[[ "$CONTROLLER_SOURCE_SHA256" == "sha256:$FORGE_SOURCE_SHA256" ]] || \
-  die 'controller source snapshot does not match the packaged Forge source'
-hash_file "$CONTROLLER"
-CONTROLLER_SHA256=$HASH
-CONTROLLER_CONFIG_SHA256=${CONTROLLER_CONFIG##*/}
+IMAGE_LOCK_FIELDS=$(python3 - "$IMAGE_LOCK" <<'PY'
+import re
+import sys
 
-OPERATOR_CONFIG=$(tar -xOf "$OPERATOR" manifest.json 2>/dev/null | node -e '
-let input = "";
-process.stdin.on("data", chunk => input += chunk).on("end", () => {
-  const manifest = JSON.parse(input);
-  if (!Array.isArray(manifest) || manifest.length !== 1) process.exit(2);
-  process.stdout.write(String(manifest[0].Config || ""));
-});
-') || die 'cannot read operator image manifest'
-[[ "$OPERATOR_CONFIG" =~ ^blobs/sha256/[0-9a-f]{64}$ ]] || \
-  die 'operator image manifest has an invalid config path'
-OPERATOR_CONFIG_SHA256=${OPERATOR_CONFIG##*/}
+path = sys.argv[1]
+rows = {}
+with open(path, encoding="utf-8") as handle:
+    for raw in handle:
+        line = raw.rstrip("\n")
+        if not line or "=" not in line:
+            raise SystemExit(2)
+        key, value = line.split("=", 1)
+        if key in rows:
+            raise SystemExit(2)
+        rows[key] = value
+expected = {
+    "LOCK_VERSION", "PIXEL_REVISION", "FORGE_REVISION", "FORGE_SOURCE_SHA256",
+    "CONTROLLER_IMAGE", "CONTROLLER_CONFIG_SHA256", "OPERATOR_IMAGE",
+    "OPERATOR_CONFIG_SHA256",
+}
+if set(rows) != expected or rows["LOCK_VERSION"] != "2":
+    raise SystemExit(2)
+revision = re.compile(r"[0-9a-f]{40}")
+digest = re.compile(r"[0-9a-f]{64}")
+controller = re.compile(r"ghcr[.]io/exploitintel/eip-pixel11xl-forge-controller@sha256:[0-9a-f]{64}")
+operator = re.compile(r"ghcr[.]io/exploitintel/eip-pixel11xl-forge-operator@sha256:[0-9a-f]{64}")
+if not revision.fullmatch(rows["PIXEL_REVISION"]) or not revision.fullmatch(rows["FORGE_REVISION"]):
+    raise SystemExit(2)
+if not digest.fullmatch(rows["FORGE_SOURCE_SHA256"]) or not digest.fullmatch(rows["CONTROLLER_CONFIG_SHA256"]) or not digest.fullmatch(rows["OPERATOR_CONFIG_SHA256"]):
+    raise SystemExit(2)
+if not controller.fullmatch(rows["CONTROLLER_IMAGE"]) or not operator.fullmatch(rows["OPERATOR_IMAGE"]):
+    raise SystemExit(2)
+print("|".join(rows[key] for key in (
+    "PIXEL_REVISION", "FORGE_REVISION", "FORGE_SOURCE_SHA256",
+    "CONTROLLER_CONFIG_SHA256", "OPERATOR_CONFIG_SHA256",
+)))
+PY
+) || die 'image lock is malformed'
+IFS='|' read -r LOCK_PIXEL_REVISION LOCK_FORGE_REVISION LOCK_FORGE_SOURCE_SHA256 \
+  CONTROLLER_CONFIG_SHA256 OPERATOR_CONFIG_SHA256 \
+  <<< "$IMAGE_LOCK_FIELDS"
+[[ "$LOCK_PIXEL_REVISION" == "$PIXEL_REVISION" ]] || die 'image lock does not match the Pixel source revision'
+[[ "$LOCK_FORGE_REVISION" == "$FORGE_REVISION" ]] || die 'image lock does not match the Forge source revision'
+[[ "$LOCK_FORGE_SOURCE_SHA256" == "$FORGE_SOURCE_SHA256" ]] || \
+  die 'image lock does not match the packaged Forge source'
 
 mkdir -p "$OUTPUT/payload" "$WORK/ops"
 cp "$SCRIPT_DIR/simple-install.sh" "$OUTPUT/install.sh"
@@ -164,17 +175,12 @@ if [[ -n "$KSU_APK" ]]; then
   cp "$KSU_APK" "$OUTPUT/payload/ksu-manager.apk"
 fi
 cp "$KSU_GRANT_HELPER" "$OUTPUT/payload/ksu-grant-profile"
-cp "$CONTROLLER" "$OUTPUT/payload/controller.tar"
-cp "$OPERATOR" "$OUTPUT/payload/operator.tar"
 cp "$APK" "$OUTPUT/payload/forge-control.apk"
 cp "$WORK/forge-source.tar" "$OUTPUT/payload/forge-source.tar"
-cat > "$OUTPUT/payload/forge.lock" <<EOF
-FORGE_REVISION=$FORGE_REVISION
-FORGE_SOURCE_SHA256=$FORGE_SOURCE_SHA256
-CONTROLLER_CONFIG_SHA256=$CONTROLLER_CONFIG_SHA256
-CONTROLLER_ARCHIVE_SHA256=$CONTROLLER_SHA256
-OPERATOR_CONFIG_SHA256=$OPERATOR_CONFIG_SHA256
-EOF
+cp "$IMAGE_LOCK" "$OUTPUT/payload/forge.lock"
+cp "$PROJECT_ROOT/eip/install-source-ops-phone.sh" "$OUTPUT/payload/install-source-ops-phone.sh"
+cp "$PROJECT_ROOT/eip/restore-source-ops-phone.sh" "$OUTPUT/payload/restore-source-ops-phone.sh"
+cp "$PROJECT_ROOT/eip/redeploy.sh" "$OUTPUT/payload/redeploy.sh"
 
 cp "$PROJECT_ROOT/eip/compose.android.yaml" "$WORK/ops/compose.android.yaml"
 cp "$PROJECT_ROOT/eip/operator-entry.sh" "$WORK/ops/entry.sh"
@@ -190,6 +196,81 @@ cp "$PROJECT_ROOT/eip/set-ollama.sh" "$WORK/ops/set-ollama.sh"
 cp "$PROJECT_ROOT/eip/set-ollama-key.sh" "$WORK/ops/set-ollama-key.sh"
 chmod 0755 "$WORK/ops"/*.sh "$WORK/ops"/*.py
 tar -C "$WORK/ops" -cf "$OUTPUT/payload/ops.tar" .
+OPS_PATHS=(
+  eip/compose.android.yaml
+  eip/operator-entry.sh
+  eip/phone-eip.sh
+  eip/eip-hostctl.sh
+  eip/hostctl-state.mjs
+  eip/rebase-managed-skills.py
+  eip/redeploy-managed-state.sh
+  eip/preflight.sh
+  eip/fix-routing.sh
+  eip/merge-env.sh
+  eip/set-ollama.sh
+  eip/set-ollama-key.sh
+)
+git -C "$PROJECT_ROOT" archive --format=tar --output="$OUTPUT/payload/source-ops.tar" \
+  "$PIXEL_REVISION" -- "${OPS_PATHS[@]}"
+
+hash_path() {
+  hash_file "$1"
+  printf '%s' "$HASH"
+}
+
+hash_file "$OUTPUT/payload/source-ops.tar"
+OPS_ARCHIVE_SHA256=$HASH
+hash_file "$OUTPUT/payload/restore-source-ops-phone.sh"
+RESTORE_HELPER_SHA256=$HASH
+{
+  printf 'schema_version=1\n'
+  printf 'source_revision=%s\n' "$FORGE_REVISION"
+  printf 'builder_revision=%s\n' "$PIXEL_REVISION"
+  printf 'source_archive_sha256=%s\n' "$FORGE_SOURCE_SHA256"
+  printf 'source_snapshot_digest=sha256:%s\n' "$FORGE_SOURCE_SHA256"
+  printf 'ops_archive_sha256=%s\n' "$OPS_ARCHIVE_SHA256"
+  printf 'restore_script_sha256=%s\n' "$RESTORE_HELPER_SHA256"
+  printf 'source_compose_sha256=%s\n' "$(hash_path "$FORGE_SOURCE/deploy/container/compose.yaml")"
+  printf 'source_verify_sha256=%s\n' "$(hash_path "$FORGE_SOURCE/deploy/container/verify.sh")"
+  printf 'source_bootstrap_sha256=%s\n' "$(hash_path "$FORGE_SOURCE/deploy/container/bootstrap.sh")"
+  printf 'source_package_sha256=%s\n' "$(hash_path "$FORGE_SOURCE/package.json")"
+  printf 'ops_compose_sha256=%s\n' "$(hash_path "$PROJECT_ROOT/eip/compose.android.yaml")"
+  printf 'ops_entry_sha256=%s\n' "$(hash_path "$PROJECT_ROOT/eip/operator-entry.sh")"
+  printf 'ops_eip_sha256=%s\n' "$(hash_path "$PROJECT_ROOT/eip/phone-eip.sh")"
+  printf 'ops_hostctl_sha256=%s\n' "$(hash_path "$PROJECT_ROOT/eip/eip-hostctl.sh")"
+  printf 'ops_hostctl_state_sha256=%s\n' "$(hash_path "$PROJECT_ROOT/eip/hostctl-state.mjs")"
+  printf 'ops_rebase_sha256=%s\n' "$(hash_path "$PROJECT_ROOT/eip/rebase-managed-skills.py")"
+  printf 'ops_redeploy_state_sha256=%s\n' "$(hash_path "$PROJECT_ROOT/eip/redeploy-managed-state.sh")"
+  printf 'ops_preflight_sha256=%s\n' "$(hash_path "$PROJECT_ROOT/eip/preflight.sh")"
+  printf 'ops_fix_routing_sha256=%s\n' "$(hash_path "$PROJECT_ROOT/eip/fix-routing.sh")"
+  printf 'ops_merge_env_sha256=%s\n' "$(hash_path "$PROJECT_ROOT/eip/merge-env.sh")"
+  printf 'ops_set_ollama_sha256=%s\n' "$(hash_path "$PROJECT_ROOT/eip/set-ollama.sh")"
+  printf 'ops_set_ollama_key_sha256=%s\n' "$(hash_path "$PROJECT_ROOT/eip/set-ollama-key.sh")"
+} > "$OUTPUT/payload/source-ops.txt"
+
+cat > "$OUTPUT/payload/deployment-manifest.json" <<EOF
+{
+  "schemaVersion": 1,
+  "kind": "eip-controller-build-manifest",
+  "provenanceLevel": "source-attributed",
+  "scope": "release-images",
+  "platform": "linux/arm64",
+  "builder": { "revision": "$PIXEL_REVISION", "dirty": false },
+  "controller": {
+    "tag": "eip-cve-controller:phone",
+    "imageId": "sha256:$CONTROLLER_CONFIG_SHA256",
+    "sourceRevision": "$FORGE_REVISION",
+    "sourceDirty": false,
+    "sourceSnapshotDigest": "sha256:$FORGE_SOURCE_SHA256"
+  },
+  "operator": {
+    "tag": "eip-operator-shell:candidate",
+    "imageId": "sha256:$OPERATOR_CONFIG_SHA256"
+  }
+}
+EOF
+chmod 0755 "$OUTPUT/payload/install-source-ops-phone.sh" \
+  "$OUTPUT/payload/restore-source-ops-phone.sh" "$OUTPUT/payload/redeploy.sh"
 chmod 0755 "$OUTPUT/install.sh" "$OUTPUT/prepare-firmware.sh"
 
 printf 'Package ready: %s\n' "$OUTPUT"

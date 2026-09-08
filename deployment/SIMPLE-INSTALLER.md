@@ -67,6 +67,25 @@ lengths, not secret values.
 The Docker data image defaults to a sparse 64 GiB allocation. Select 8, 16,
 32, or 64 GiB with `--disk-gib SIZE`.
 
+## Update an installed phone
+
+Extract the latest bundle and run:
+
+```sh
+./install.sh --serial ADB_SERIAL
+```
+
+No firmware preparation is needed. The installer detects the qualified
+existing installation before applying fresh-install payload requirements. It
+preserves the existing Docker disk size, Forge state, provider configuration,
+WebUI credentials, and CVE data. It pulls both release images by immutable
+public GHCR digest, prevents new work, waits for current work to become idle,
+and uses the existing source, operations, image, and managed-skills rollback
+transaction. The update is complete only when the final line is `READY`.
+
+Do not pass `--disk-gib` for an update. Use `--provider-env` only when you
+intentionally want to merge additional provider settings.
+
 ## Success contract
 
 In one process, the normal invocation installs KernelSU-Next, the Pixel host
@@ -112,10 +131,12 @@ KernelSU Manager APK; `prepare-firmware.sh` obtains or creates those locally.
 Supplying the optional `--engine`, `--ksu-apk`, `--stock-boot`, and
 `--ksu-init-boot` arguments remains available for operator-local packages.
 
-The builder accepts only the Forge commit in `FORGE_REVISION` and verifies
-that the controller image labels and source archive match that commit.
-The installer rechecks the exact prepared boot inputs before touching the
-phone and verifies the controller and operator image IDs after import.
+The builder accepts only the Forge commit in `FORGE_REVISION` and a lock from
+the matching Pixel image-publishing run. Release packages contain immutable
+public GHCR references instead of `controller.tar` and `operator.tar`. The
+installer verifies each downloaded image's config ID before assigning its
+local release tag. It still rechecks the exact prepared boot inputs used by a
+fresh installation.
 
 Focused checks:
 
