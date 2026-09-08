@@ -321,6 +321,7 @@ function harness({ manifestOverrides, environment = {}, serialArgs = ["--serial"
     ...process.env,
     HOME: fakeHome,
     PATH: `${fakeBin}:${process.env.PATH}`,
+    ADB: adb,
     FAKE_STATE_ROOT: temporaryRoot,
     FAKE_EXPECTED_SERIAL: testSerial,
     FAKE_CANDIDATE_IMAGE_ID: candidateId,
