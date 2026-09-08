@@ -18,6 +18,7 @@ const fakeDockerProgram = path.join(temporaryRoot, "fake-docker.mjs");
 const sourceRevision = "1".repeat(40);
 const builderRevision = "2".repeat(40);
 const imageId = `sha256:${"a".repeat(64)}`;
+const configId = `sha256:${"b".repeat(64)}`;
 const requiredSourceFiles = [
   ".dockerignore",
   "deploy/container/Dockerfile",
@@ -127,6 +128,7 @@ process.exit(94);
 `);
 
 fs.writeFileSync(fakeDockerProgram, String.raw`import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.FAKE_DOCKER_LOG, JSON.stringify(args) + "\n");
@@ -170,6 +172,25 @@ if (args[0] === "image" && args[1] === "inspect") {
       || labels["io.exploitintel.build.source-snapshot-sha256"],
   ];
   process.stdout.write(fields.join("|") + "\n");
+  process.exit(0);
+}
+
+if (args[0] === "image" && args[1] === "save") {
+  if (process.env.FAKE_SAVE_FAIL === "1") process.exit(46);
+  const config = process.env.FAKE_CONFIG_PATH
+    || "blobs/sha256/" + process.env.FAKE_CONFIG_ID.replace(/^sha256:/, "");
+  const directory = process.env.FAKE_DOCKER_STATE + ".archive";
+  fs.rmSync(directory, { recursive: true, force: true });
+  fs.mkdirSync(directory);
+  fs.writeFileSync(directory + "/manifest.json", JSON.stringify([{
+    Config: config,
+    RepoTags: ["eip-cve-controller:phone"],
+    Layers: [],
+  }]));
+  const archived = spawnSync("tar", ["-C", directory, "-cf", "-", "manifest.json"]);
+  fs.rmSync(directory, { recursive: true, force: true });
+  if (archived.status !== 0) process.exit(47);
+  process.stdout.write(archived.stdout);
   process.exit(0);
 }
 
@@ -291,6 +312,7 @@ function run(harness, args = [
       FAKE_SOURCE_STATUS: "",
       FAKE_BUILDER_STATUS: "",
       FAKE_IMAGE_ID: imageId,
+      FAKE_CONFIG_ID: configId,
       ...overrides,
     },
   });
@@ -468,7 +490,7 @@ for (const [sourceDirty, builderDirty] of [[true, false], [false, true], [true, 
   const result = run(harness);
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   assert.equal(fs.existsSync(inertMarker), false, "profile content was executed");
-  assert.equal(result.dockerCalls.length, 2);
+  assert.equal(result.dockerCalls.length, 3);
 
   const actualBuild = result.dockerCalls[0];
   const contextRoot = actualBuild.at(-1);
@@ -499,6 +521,7 @@ for (const [sourceDirty, builderDirty] of [[true, false], [false, true], [true, 
   assert.deepEqual(actualBuild, expectedBuild);
   assert.deepEqual(result.dockerCalls[1].slice(0, 3), ["image", "inspect", "--format"]);
   assert.equal(result.dockerCalls[1].at(-1), "eip-cve-controller:phone");
+  assert.deepEqual(result.dockerCalls[2], ["image", "save", "eip-cve-controller:phone"]);
   assert.equal(JSON.stringify(result.dockerCalls).includes("operator"), false);
   assert.equal(JSON.stringify(result.dockerCalls).toLowerCase().includes("ollama"), false);
 
@@ -522,7 +545,7 @@ for (const [sourceDirty, builderDirty] of [[true, false], [false, true], [true, 
   assert.deepEqual(manifest.builder, { revision: builderRevision, dirty: false });
   assert.deepEqual(manifest.controller, {
     tag: "eip-cve-controller:phone",
-    imageId,
+    imageId: configId,
     sourceRevision,
     sourceDirty: false,
     sourceSnapshotDigest,
@@ -549,6 +572,8 @@ for (const overrides of [
   { FAKE_INSPECT_BUILDER_DIRTY: "true" },
   { FAKE_INSPECT_SOURCE_SNAPSHOT_DIGEST: `sha256:${"b".repeat(64)}` },
   { FAKE_INSPECT_RAW: `${imageId}|arm64|too|many|fields|for|this|manifest` },
+  { FAKE_SAVE_FAIL: "1" },
+  { FAKE_CONFIG_PATH: "blobs/sha256/short" },
 ]) {
   const harness = makeHarness();
   const result = run(harness, undefined, overrides);

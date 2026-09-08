@@ -215,7 +215,7 @@ CONTROLLER_TAG=eip-cve-controller:$IMAGE_TAG
 SOURCE_DIRTY_LABEL=$SOURCE_DIRTY
 BUILDER_DIRTY_LABEL=$BUILDER_DIRTY
 
-for REQUIRED_COMMAND in docker tar mktemp chmod link; do
+for REQUIRED_COMMAND in docker tar node mktemp chmod link; do
   command -v "$REQUIRED_COMMAND" >/dev/null 2>&1 || die "$REQUIRED_COMMAND is unavailable"
 done
 
@@ -353,14 +353,14 @@ INSPECT_OUTPUT=$(docker image inspect --format "$INSPECT_FORMAT" "$CONTROLLER_TA
 [[ "$INSPECT_OUTPUT" != *$'\n'* && "$INSPECT_OUTPUT" != *$'\r'* ]] || \
   die 'controller image inspection returned malformed output'
 
-IFS='|' read -r IMAGE_ID IMAGE_ARCH INSPECT_SOURCE_REVISION \
+IFS='|' read -r LOCAL_IMAGE_ID IMAGE_ARCH INSPECT_SOURCE_REVISION \
   INSPECT_SOURCE_DIRTY INSPECT_BUILDER_REVISION INSPECT_BUILDER_DIRTY \
   INSPECT_SOURCE_SNAPSHOT_DIGEST INSPECT_EXTRA \
   <<< "$INSPECT_OUTPUT"
-EXPECTED_INSPECT_OUTPUT=$IMAGE_ID'|'$IMAGE_ARCH'|'$INSPECT_SOURCE_REVISION'|'$INSPECT_SOURCE_DIRTY'|'$INSPECT_BUILDER_REVISION'|'$INSPECT_BUILDER_DIRTY'|'$INSPECT_SOURCE_SNAPSHOT_DIGEST
+EXPECTED_INSPECT_OUTPUT=$LOCAL_IMAGE_ID'|'$IMAGE_ARCH'|'$INSPECT_SOURCE_REVISION'|'$INSPECT_SOURCE_DIRTY'|'$INSPECT_BUILDER_REVISION'|'$INSPECT_BUILDER_DIRTY'|'$INSPECT_SOURCE_SNAPSHOT_DIGEST
 [[ -z "$INSPECT_EXTRA" && "$INSPECT_OUTPUT" == "$EXPECTED_INSPECT_OUTPUT" ]] || \
   die 'controller image inspection returned malformed fields'
-[[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'controller image ID is malformed'
+[[ "$LOCAL_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'controller image ID is malformed'
 [[ "$IMAGE_ARCH" == arm64 ]] || die 'controller image architecture is not arm64'
 [[ "$INSPECT_SOURCE_REVISION" == "$SOURCE_REVISION" ]] || \
   die 'controller image source revision label does not match'
@@ -372,6 +372,23 @@ EXPECTED_INSPECT_OUTPUT=$IMAGE_ID'|'$IMAGE_ARCH'|'$INSPECT_SOURCE_REVISION'|'$IN
   die 'controller image builder dirty label does not match'
 [[ "$INSPECT_SOURCE_SNAPSHOT_DIGEST" == "$SOURCE_SNAPSHOT_DIGEST" ]] || \
   die 'controller image source snapshot digest label does not match'
+
+# Docker Desktop's containerd store identifies an attested image by its OCI
+# index, while a Docker archive imported on Android identifies the same image
+# by its config digest. Record the portable post-import identity used by the
+# phone deployment transaction.
+CONTROLLER_CONFIG_PATH=$(docker image save "$CONTROLLER_TAG" | tar -xOf - manifest.json | node -e '
+let input = "";
+process.stdin.on("data", chunk => input += chunk).on("end", () => {
+  const manifest = JSON.parse(input);
+  const entries = manifest.filter(entry =>
+    Array.isArray(entry.RepoTags) && entry.RepoTags.includes("eip-cve-controller:phone"));
+  if (entries.length !== 1 ||
+      !/^blobs\/sha256\/[0-9a-f]{64}$/.test(String(entries[0].Config || ""))) process.exit(2);
+  process.stdout.write(entries[0].Config);
+});
+') || die 'cannot resolve the controller config digest from its Docker archive'
+IMAGE_ID=sha256:${CONTROLLER_CONFIG_PATH##*/}
 
 CREATED_AT=$(date -u '+%Y-%m-%dT%H:%M:%SZ') || die 'cannot obtain manifest timestamp'
 [[ "$CREATED_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || \
