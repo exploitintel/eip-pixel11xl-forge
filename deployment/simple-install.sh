@@ -359,7 +359,8 @@ stage_source_ops_transaction() {
   remote=/data/local/tmp/eip-source-ops-$FORGE_REVISION-$PIXEL_REVISION
   hash_file "$PAYLOAD/source-ops.txt"
   manifest_sha=$FILE_SHA256
-  phone "rm -rf $remote; install -d -m 0700 -o 0 -g 0 $remote"
+  phone "rm -rf $remote"
+  "$ADB_BIN" -s "$SERIAL" shell "mkdir -p $remote"
   push "$PAYLOAD/forge-source.tar" "$remote/source.tar"
   push "$PAYLOAD/source-ops.tar" "$remote/ops.tar"
   push "$PAYLOAD/source-ops.txt" "$remote/payload.txt"
