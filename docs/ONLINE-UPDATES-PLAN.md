@@ -1,6 +1,6 @@
 # Online image and update plan
 
-Status: Slice 1 complete and phone-qualified; Slice 2 implementation in progress
+Status: Slices 1 and 2 complete and phone-qualified
 
 ## Objective
 
@@ -243,6 +243,27 @@ explicit identity; do not run a broad Docker prune.
    phone.
 5. Prove the same candidate through the clean-install sequence.
 6. Publish a new prerelease only after both proofs pass.
+
+## Qualification record
+
+The registry-backed release was qualified on 2026-09-08 with Pixel revision
+`7c7813ce915394d4f01ffe6f606077b76b4cec95` and Forge revision
+`7a840d5447bfe73a08e3b6e8a5020dcdb4054fde`.
+
+- Repository CI passed before merge.
+- Both public GHCR images passed anonymous digest pulls.
+- The public installer package is 27 MiB and contains no Docker image archive.
+- An in-place update preserved the existing disk and provider configuration and
+  ended in `READY` without manual recovery.
+- A following registry-backed update reused every existing controller
+  filesystem layer and downloaded only the changed operator layers.
+- A separate wipe followed by one clean installer invocation rebuilt the phone,
+  restored the supplied provider configuration, and ended in `READY`.
+- Focused rollback tests injected unhealthy candidate and transaction failures
+  and proved restoration of the previous source, operations, managed state,
+  image tags, and healthy stack.
+- Final lifecycle status reported Docker, WebUI, and Agent chat healthy on the
+  exact controller and operator config identities recorded in the release lock.
 
 ## Explicit non-goals
 
