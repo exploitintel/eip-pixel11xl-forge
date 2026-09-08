@@ -3,7 +3,10 @@
 # client-side, and those paths only exist in the phone's filesystem.
 # docker:28-cli brings the docker CLI plus the compose and buildx plugins;
 # bootstrap.sh additionally needs bash, python3, GNU coreutils and util-linux.
-FROM docker:28-cli
+FROM docker:28.5.2-cli@sha256:625d9431a9f54c5a2bc90f24f0e1c3d55b1349fd857dd85035f98c2c9acbdd4d
+ARG PIXEL_REVISION
+LABEL org.opencontainers.image.source="https://github.com/exploitintel/eip-pixel11xl-forge" \
+      org.opencontainers.image.revision="$PIXEL_REVISION"
 RUN apk add --no-cache bash python3 coreutils util-linux jq git shadow
 WORKDIR /work
 ENTRYPOINT ["/bin/bash"]

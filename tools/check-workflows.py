@@ -23,6 +23,7 @@ for path in sorted(workflow_dir.glob("*.y*ml")):
     persisted_disabled_count = 0
     current_job: str | None = None
     privileged_writes: list[tuple[str, str, int]] = []
+    package_writes: list[tuple[str, int]] = []
     for line_number, line in enumerate(lines, 1):
         job_match = re.fullmatch(r"  ([A-Za-z0-9_-]+):", line)
         if job_match:
@@ -39,7 +40,9 @@ for path in sorted(workflow_dir.glob("*.y*ml")):
         permission = re.fullmatch(r"\s+([A-Za-z-]+):\s*write", line)
         if permission:
             scope = permission.group(1)
-            if scope not in {"id-token", "attestations", "artifact-metadata"}:
+            if scope == "packages" and relative == Path(".github/workflows/images.yml") and current_job == "publish":
+                package_writes.append((current_job, line_number))
+            elif scope not in {"id-token", "attestations", "artifact-metadata"}:
                 failures.append(f"{relative}:{line_number}: forbidden write permission: {scope}: write")
             else:
                 privileged_writes.append((current_job or "<unknown>", scope, line_number))
@@ -54,6 +57,9 @@ for path in sorted(workflow_dir.glob("*.y*ml")):
             failures.append(
                 f"{relative}: attestation write permissions must occur exactly once in one job"
             )
+    if relative == Path(".github/workflows/images.yml"):
+        if len(package_writes) != 1 or package_writes[0][0] != "publish":
+            failures.append(f"{relative}: packages: write must occur exactly once in the publish job")
     for pattern, message in (
         (r"(?m)^\s*pull_request_target\s*:", "pull_request_target is forbidden"),
         (r"(?m)^\s*permissions\s*:\s*(?:read-all|write-all)\s*$", "broad permissions are forbidden"),

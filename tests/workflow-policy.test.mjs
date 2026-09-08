@@ -11,6 +11,8 @@ const checker = path.join(projectRoot, "tools", "check-workflows.py");
 const refChecker = path.join(projectRoot, "tools", "check-candidate-ref.py");
 const workflowPath = path.join(projectRoot, ".github", "workflows", "kernel.yml");
 const ciWorkflowPath = path.join(projectRoot, ".github", "workflows", "ci.yml");
+const imagesWorkflowPath = path.join(projectRoot, ".github", "workflows", "images.yml");
+const operatorDockerfile = fs.readFileSync(path.join(projectRoot, "eip", "Dockerfile.operator"), "utf8");
 
 test("source CI runs the normal checks and Android host contracts", () => {
   const workflow = fs.readFileSync(ciWorkflowPath, "utf8");
@@ -41,6 +43,20 @@ test("Phase C workflow is pinned, least-privilege, attested, and release-free", 
   for (const match of workflow.matchAll(/\buses:\s*([^#\s]+)/g)) {
     assert.match(match[1], /^[^@\s]+@[0-9a-f]{40}$/);
   }
+});
+
+test("container publication is manual, digest-bound, and limited to package writes", () => {
+  const workflow = fs.readFileSync(imagesWorkflowPath, "utf8");
+  assert.match(workflow, /^  workflow_dispatch:$/m);
+  assert.match(workflow, /^permissions: \{\}$/m);
+  assert.equal((workflow.match(/^      packages: write$/gm) ?? []).length, 1);
+  assert.doesNotMatch(workflow, /^\s+contents: write$|gh release|pull_request_target/i);
+  assert.match(workflow, /ghcr\.io\/exploitintel\/eip-pixel11xl-forge-controller/);
+  assert.match(workflow, /ghcr\.io\/exploitintel\/eip-pixel11xl-forge-operator/);
+  assert.match(workflow, /CONTROLLER_IMAGE=.*@\$controller_digest/);
+  assert.match(workflow, /OPERATOR_IMAGE=.*@\$operator_digest/);
+  assert.match(workflow, /DOCKER_CONFIG="\$anonymous_config" docker pull/);
+  assert.match(operatorDockerfile, /^FROM docker:28\.5\.2-cli@sha256:[0-9a-f]{64}$/m);
 });
 
 function mutatedWorkflow(rewrite) {

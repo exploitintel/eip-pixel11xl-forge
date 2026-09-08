@@ -4,8 +4,10 @@ The public `v0.1.0-rc.7` installer is a manually published, unsigned
 prerelease for qualification. Its release asset is the supported public
 installer path, but it is not a signed or stable release. The current
 kernel-candidate and qualification-module workflows do not publish GitHub
-releases; protected automated publication, repository rulesets, immutable
-releases, and an offline release key remain future work.
+releases. A separate, manually dispatched workflow may publish the public
+controller and operator container images by digest. Protected automated
+release publication, repository rulesets, immutable releases, and an offline
+release key remain future work.
 
 ## Versions and immutable assets
 

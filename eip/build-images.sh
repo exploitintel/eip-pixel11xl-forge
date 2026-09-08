@@ -335,6 +335,7 @@ if ! docker build \
   --platform "linux/$PLATFORM_ARCH" \
   --build-arg "EIP_CVE_UID=$CONTROLLER_UID" \
   --build-arg "EIP_CVE_GID=$CONTROLLER_GID" \
+  --label "org.opencontainers.image.source=https://github.com/exploitintel/eip-pixel11xl-forge" \
   --label "org.opencontainers.image.revision=$SOURCE_REVISION" \
   --label "io.exploitintel.build.source-dirty=$SOURCE_DIRTY_LABEL" \
   --label "io.exploitintel.build.builder-revision=$BUILDER_REVISION" \
