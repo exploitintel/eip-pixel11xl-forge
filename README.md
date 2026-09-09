@@ -1,6 +1,20 @@
 # eip-pixel11xl-forge
 
-Run Forge v4 and Docker Engine natively on a Pixel 11 Pro XL.
+Turn a Pixel 11 Pro XL into a self-contained CVE research device.
+
+[Forge v4](https://github.com/exploitintel/eip-cve-public-v4) is an
+operator-controlled CVE research workbench: agents perform source review,
+build isolated labs, do bounded proof work, and prepare reviewed publication
+packages, with a human operator in control at every gate. This repository
+makes that entire system run on the phone itself.
+
+The phone runs a real Docker Engine on a matched custom kernel - not an
+emulator, not a chroot, and not a thin client for a server somewhere else.
+Labs, agents, and the Forge WebUI all execute on the device; apart from
+installs and updates, the traffic leaving it is the model-provider calls you
+configure. You get a
+pocket-sized research host that works anywhere there is Wi-Fi, and that you
+can wipe back to stock Google firmware whenever you want a clean start.
 
 This repository owns the Pixel host, installer, Forge Control Android app,
 and release packaging. Forge itself remains in
