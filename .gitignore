@@ -3,6 +3,11 @@
 *.tmp
 *.swp
 
+# Stock firmware pulled for a local flash. check-public-tree.sh already refuses
+it as a forbidden top-level path, but that guard only runs in CI, which is after
+a push has already put 80MB of vendor images in public history.
+stock/
+
 # Build and candidate outputs never enter source history.
 out/
 dist/
