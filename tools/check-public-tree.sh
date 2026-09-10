@@ -39,7 +39,7 @@ for forbidden in .private stock artifacts baseline PLAN.md PACKAGING-PLAN.md PRO
   [ ! -e "$forbidden" ] || fail "forbidden public path: $forbidden"
 done
 
-allowed_top='^(\.github|android|android-app|deployment|docs|eip|kernel|module|schemas|tests|tools|\.gitignore|AGENTS\.md|FORGE_REVISION|LICENSE|NOTICE\.md|README\.md|package\.json)$'
+allowed_top='^(\.github|android|android-app|deployment|docs|eip|kernel|module|schemas|tests|tools|\.gitignore|AGENTS\.md|CLAUDE\.md|FORGE_REVISION|LICENSE|NOTICE\.md|README\.md|package\.json)$'
 while IFS= read -r entry; do
   [[ "$entry" =~ $allowed_top ]] || fail "unexpected top-level path: $entry"
 done < <(find . -mindepth 1 -maxdepth 1 ! -name .git ! -name .cache -exec basename {} \; | LC_ALL=C sort)
