@@ -519,7 +519,7 @@ test("assembler refuses a development-only module version", () => {
     const properties = path.join(item.moduleSource, "module.prop");
     fs.writeFileSync(
       properties,
-      fs.readFileSync(properties, "utf8").replace("version=0.1.0-rc.2", "version=0.1.0-dev"),
+      fs.readFileSync(properties, "utf8").replace("version=0.1.0-rc.3", "version=0.1.0-dev"),
     );
     const output = path.join(item.root, "development.zip");
     const result = assemble(item, output);
