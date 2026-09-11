@@ -23,6 +23,8 @@ DOCKERD_SCRIPT=$DOCKER_ROOT/bin/dockerd.sh
 RUN_ROOT=$DOCKER_ROOT/run
 DOCKER_SOCKET=$RUN_ROOT/docker.sock
 DOCKER_PIDFILE=$RUN_ROOT/docker.pid
+CONTAINERD_RUN_ROOT=$DOCKER_ROOT/exec/containerd
+CONTAINERD_PIDFILE=$CONTAINERD_RUN_ROOT/containerd.pid
 LOCK_DIR=$RUN_ROOT/host-lifecycle.lock
 LOCK_OWNER=$LOCK_DIR/pid
 LOCK_RECOVERY=$LOCK_DIR/.recovery
@@ -450,6 +452,60 @@ remove_stale_pidfile() {
   rm -f "$DOCKER_PIDFILE" || die 'cannot remove proved-stale Docker pidfile'
   probe_daemon
   [ "$DAEMON_STATE" = stopped ] || die 'Docker state changed during stale recovery'
+}
+
+read_internal_containerd_pidfile() {
+  INTERNAL_CONTAINERD_PID=
+  [ -f "$CONTAINERD_PIDFILE" ] && [ ! -L "$CONTAINERD_PIDFILE" ] || return 1
+  INTERNAL_CONTAINERD_PID=$(cat "$CONTAINERD_PIDFILE" 2>/dev/null) || return 1
+  case "$INTERNAL_CONTAINERD_PID" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "$INTERNAL_CONTAINERD_PID" -gt 1 ] 2>/dev/null
+}
+
+start_runtime_artifacts_recoverable() {
+  resolve_active_release || return 1
+
+  scan_exact_processes "$EXPECTED_DOCKERD" "$DOCKERD"
+  [ "$SCAN_COUNT" -eq 0 ] &&
+    [ "$SCAN_FOREIGN_EXE_COUNT" -eq 0 ] &&
+    [ "$SCAN_ARGV0_MISMATCH_COUNT" -eq 0 ] || return 1
+  scan_exact_processes "$EXPECTED_CONTAINERD" "$CONTAINERD" containerd
+  [ "$SCAN_COUNT" -eq 0 ] &&
+    [ "$SCAN_FOREIGN_EXE_COUNT" -eq 0 ] &&
+    [ "$SCAN_ARGV0_MISMATCH_COUNT" -eq 0 ] || return 1
+  ! docker_info || return 1
+
+  RUNTIME_PID_RECORD=0
+  if [ -e "$DOCKER_PIDFILE" ] || [ -L "$DOCKER_PIDFILE" ]; then
+    read_pidfile || return 1
+    RUNTIME_PID_RECORD=1
+  fi
+  if [ -e "$CONTAINERD_PIDFILE" ] || [ -L "$CONTAINERD_PIDFILE" ]; then
+    [ -d "$DOCKER_ROOT/exec" ] && [ ! -L "$DOCKER_ROOT/exec" ] &&
+      [ -d "$CONTAINERD_RUN_ROOT" ] && [ ! -L "$CONTAINERD_RUN_ROOT" ] || return 1
+    read_internal_containerd_pidfile || return 1
+    RUNTIME_PID_RECORD=1
+  fi
+  if [ -e "$DOCKER_SOCKET" ] || [ -L "$DOCKER_SOCKET" ]; then
+    [ -S "$DOCKER_SOCKET" ] && [ ! -L "$DOCKER_SOCKET" ] || return 1
+    [ "$RUNTIME_PID_RECORD" -eq 1 ] || return 1
+  fi
+  return 0
+}
+
+recover_start_runtime_artifacts() {
+  start_runtime_artifacts_recoverable \
+    || die 'Docker runtime artifacts are not proved stale; refusing recovery'
+  rm -f "$DOCKER_PIDFILE" "$DOCKER_SOCKET" "$CONTAINERD_PIDFILE" \
+    || die 'cannot remove proved-stale Docker runtime artifacts'
+  [ ! -e "$DOCKER_PIDFILE" ] && [ ! -L "$DOCKER_PIDFILE" ] &&
+    [ ! -e "$DOCKER_SOCKET" ] && [ ! -L "$DOCKER_SOCKET" ] &&
+    [ ! -e "$CONTAINERD_PIDFILE" ] && [ ! -L "$CONTAINERD_PIDFILE" ] \
+    || die 'proved-stale Docker runtime artifacts remain after recovery'
+  probe_daemon
+  [ "$DAEMON_STATE" = stopped ] || die 'Docker state changed during runtime recovery'
 }
 
 probe_inventory() {
@@ -1454,11 +1510,16 @@ start_host() {
   probe_daemon
   case "$DAEMON_STATE" in
     running) DAEMON_ALREADY_RUNNING=1 ;;
-    stale-pidfile)
-      remove_stale_pidfile
+    stopped|stale-pidfile|foreign-pid)
+      recover_start_runtime_artifacts
       DAEMON_ALREADY_RUNNING=0
       ;;
-    stopped) DAEMON_ALREADY_RUNNING=0 ;;
+    unmanaged-daemon)
+      [ -z "$DAEMON_PID" ] ||
+        die 'Docker daemon identity is unmanaged-daemon; refusing a second daemon'
+      recover_start_runtime_artifacts
+      DAEMON_ALREADY_RUNNING=0
+      ;;
     *) die "Docker daemon identity is $DAEMON_STATE; refusing a second daemon" ;;
   esac
   require_start_prerequisites

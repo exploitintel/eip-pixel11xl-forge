@@ -174,6 +174,15 @@ namespace, SysV IPC, and POSIX message queue capabilities recorded in
   compatibility, although the daemon no longer exposes a TCP API; and
 - starts the exact managed daemon only when it is not already running.
 
+Before a stopped daemon is started, the command also reconciles the three
+boot-ephemeral runtime entries that can survive under `/data`: `docker.pid`,
+`docker.sock`, and containerd's internal `containerd.pid`. Removal is allowed
+only while the host lifecycle lock is held, no active- or prior-release
+dockerd or containerd process is present, the Docker API is unavailable, and
+every existing entry has its expected regular-file or socket type. A PID that
+has been reused by an unrelated Android process is not signalled. Malformed,
+linked, live, or otherwise ambiguous state is refused unchanged.
+
 The launcher binds the Docker API only to `/data/docker/run/docker.sock`.
 Docker owns its normal bridge and container firewall rules.
 

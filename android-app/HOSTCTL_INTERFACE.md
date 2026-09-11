@@ -28,6 +28,15 @@ when the host authority proves it safe. The app does not reproduce pipeline
 timing or container ownership rules. Wire names are isolated in
 `HostctlCommand` so a later authority rename is local.
 
+For Docker convergence, `start` delegates to the installed generic host
+authority before it starts Forge. That authority can remove only the three
+proved-stale Docker PID/socket records documented in
+`docs/MODULE-LIFECYCLE.md`; it does not signal a PID reused by another Android
+process. Stop and park keep their fail-closed foreign-process behavior. The
+`logs` response begins with the exact current daemon classification before the
+bounded daemon and container logs so a refused recovery remains visible to the
+operator.
+
 The UI asks for confirmation before Start, Park now, Park when idle, and Cancel
 pending park. Closing a dialog or pressing Back dispatches nothing. The UI
 checks current availability again on confirmation; the host remains the final
