@@ -199,6 +199,12 @@ Start invokes its identity-checked `post-start` phase after host readiness. A
 profile refusal is a failed Start even though a newly started Docker daemon is
 left running for safe diagnosis.
 
+Start also recovers the bounded Docker and containerd PID/socket artifacts
+that may survive a reboot under `/data` after their numeric PIDs have been
+reused by unrelated Android processes. It first proves that no Docker runtime
+process or API is live and never signals the unrelated PID. Stop retains its
+stricter behavior and refuses a foreign or ambiguous PID identity.
+
 The root shell status command is:
 
 ```sh

@@ -42,6 +42,24 @@ test("start reopens admission only for normal broker health", () => {
   assert.match(start, /enable_maintenance\n  die "Forge did not pass normal post-maintenance health/);
 });
 
+test("start delegates Docker convergence to the generic host authority", () => {
+  assert.match(source, /^HOSTCTL=\/data\/docker\/bin\/hostctl$/m);
+  const startDocker = functionBody("start_docker", "start_system");
+  assert.match(startDocker, /"\$HOSTCTL" start/);
+  assert.match(startDocker, /\[ "\$DAEMON_STATE" = running \]/);
+  assert.doesNotMatch(startDocker, /setsid|rm -f "\$DOCKER_PIDFILE"/);
+});
+
+test("host logs lead with the exact daemon classification", () => {
+  const start = source.indexOf("bounded_logs() {\n");
+  const end = source.indexOf('\ncase "$COMMAND" in', start + 1);
+  assert.notEqual(start, -1, "bounded_logs is missing");
+  assert.notEqual(end, -1, "command dispatch boundary is missing");
+  const logs = source.slice(start, end);
+  assert.ok(logs.indexOf("probe_daemon") < logs.indexOf("dockerd (last 80 lines"));
+  assert.match(logs, /daemon_state=\$DAEMON_STATE/);
+});
+
 test("pending park retains admission and cancellation reopens it", () => {
   const pending = functionBody("write_park_when_idle_marker", "cancel_park_when_idle");
   assert.match(pending, /^write_park_when_idle_marker\(\) \{\n  enable_maintenance/m);

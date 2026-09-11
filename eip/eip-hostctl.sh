@@ -16,6 +16,7 @@ DOCKER_DISK=/data/docker/disk.img
 DOCKER_RUN=/data/docker/run
 DOCKER_SOCKET=/data/docker/run/docker.sock
 DOCKER_PIDFILE=/data/docker/run/docker.pid
+HOSTCTL=/data/docker/bin/hostctl
 EIP=/data/eip-cve-ops/eip.sh
 STATE_INSPECTOR=/data/eip-cve-ops/hostctl-state.mjs
 BINFMT_ROOT=/dev/binfmt_misc
@@ -466,7 +467,7 @@ require_start_prerequisites() {
   iptables -C INPUT -p tcp --dport 7171 -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p tcp --dport 7171 -j ACCEPT
   ip rule show | grep -q '9990:.*to 172.17.0.0/16 lookup main' || ip rule add to 172.17.0.0/16 lookup main pref 9990
   ip rule show | grep -q '9991:.*from 172.17.0.0/16 lookup wlan0' || ip rule add from 172.17.0.0/16 lookup 1016 pref 9991
-  for executable in "$DOCKER" "$DOCKERD" "$CONTAINERD" "$DOCKERD_SCRIPT" "$EIP"; do
+  for executable in "$DOCKER" "$DOCKERD" "$CONTAINERD" "$DOCKERD_SCRIPT" "$HOSTCTL" "$EIP"; do
     [ -f "$executable" ] && [ ! -L "$executable" ] && [ -x "$executable" ] ||
       die "required executable is unavailable: $executable"
   done
@@ -517,32 +518,10 @@ ensure_binfmt_amd64() {
 }
 
 start_docker() {
+  "$HOSTCTL" start >/dev/null || die 'generic Docker host recovery or start failed'
   probe_daemon
-  case "$DAEMON_STATE" in
-    running) return 0 ;;
-    stale-pidfile)
-      read_pidfile || die 'stale Docker pidfile changed during inspection'
-      scan_exact_processes "$DOCKERD"
-      [ "$SCAN_COUNT" = 0 ] || die 'an untracked Docker daemon appeared during stale-pidfile recovery'
-      scan_exact_processes "$CONTAINERD"
-      [ "$SCAN_COUNT" = 0 ] && [ ! -d "$PROC_ROOT/$READ_PID" ] && ! docker_info && [ ! -e "$DOCKER_SOCKET" ] && [ ! -L "$DOCKER_SOCKET" ] ||
-        die 'stale Docker pidfile could not be proved safe to remove'
-      rm -f "$DOCKER_PIDFILE" || die 'cannot remove proved-stale Docker pidfile'
-      ;;
-    stopped) ;;
-    *) die "Docker daemon identity is $DAEMON_STATE; refusing a second daemon" ;;
-  esac
-
-  setsid sh "$DOCKERD_SCRIPT" --runtime-only </dev/null >/dev/null 2>&1 &
-  START_ATTEMPT=0
-  while [ "$START_ATTEMPT" -lt "$READY_TRIES" ]; do
-    sleep "$SLEEP_SECONDS"
-    probe_daemon
-    [ "$DAEMON_STATE" = running ] && return 0
-    case "$DAEMON_STATE" in foreign-pid|invalid-pidfile|multiple-daemons|pidfile-mismatch) break ;; esac
-    START_ATTEMPT=$((START_ATTEMPT + 1))
-  done
-  die "Docker did not become ready (state=$DAEMON_STATE)"
+  [ "$DAEMON_STATE" = running ] ||
+    die "generic host start returned without a running Docker daemon (state=$DAEMON_STATE)"
 }
 
 start_system() {
@@ -704,13 +683,14 @@ reconcile_park_when_idle() {
 }
 
 bounded_logs() {
+  probe_daemon
+  printf '%s\n' '== host lifecycle ==' "daemon_state=$DAEMON_STATE"
   printf '%s\n' '== dockerd (last 80 lines, at most 64 KiB) =='
   if [ -f "$DOCKER_ROOT/dockerd.log" ] && [ ! -L "$DOCKER_ROOT/dockerd.log" ]; then
     tail -c 65536 "$DOCKER_ROOT/dockerd.log" 2>/dev/null | tail -n 80
   else
     printf '%s\n' '(unavailable)'
   fi
-  probe_daemon
   [ "$DAEMON_STATE" = running ] || return 0
   inventory || return 0
   for LOG_ID in "$UI_ID" "$CHAT_ID"; do

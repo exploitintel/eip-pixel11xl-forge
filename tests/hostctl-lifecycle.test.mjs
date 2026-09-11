@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -576,6 +577,54 @@ fixtureTest("start refuses duplicate daemons", (item) => {
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /multiple-daemons/);
   assert.doesNotMatch(readCalls(item), /setsid|dockerd\.sh/);
+});
+
+fixtureTest("start recovers boot-stale Docker and containerd PIDs reused by foreign processes", (item) => {
+  const foreignDocker = path.join(item.root, "foreign-docker-pid-owner");
+  const foreignContainerd = path.join(item.root, "foreign-containerd-pid-owner");
+  writeExecutable(foreignDocker, "#!/bin/sh\nexit 0\n");
+  writeExecutable(foreignContainerd, "#!/bin/sh\nexit 0\n");
+  addProcess(item, 7001, foreignDocker, "com.example.foreign");
+  addProcess(item, 7002, foreignContainerd, "system_server");
+  fs.writeFileSync(path.join(item.runRoot, "docker.pid"), "7001\n");
+  const containerdPid = path.join(item.dockerRoot, "exec", "containerd", "containerd.pid");
+  fs.mkdirSync(path.dirname(containerdPid), { recursive: true });
+  fs.writeFileSync(containerdPid, "7002\n");
+  const dockerSocket = path.join(item.runRoot, "docker.sock");
+  const socketFixture = spawnSync(process.execPath, ["-e", `
+    const net = require("node:net");
+    const server = net.createServer();
+    server.listen(${JSON.stringify(dockerSocket)}, () => process.kill(process.pid, "SIGKILL"));
+  `]);
+  assert.equal(socketFixture.signal, "SIGKILL");
+  assert.equal(fs.statSync(dockerSocket).isSocket(), true);
+
+  const result = runHostctl(item, "start");
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "result=running\n");
+  assert.equal(fs.existsSync(containerdPid), false);
+  assert.equal(fs.existsSync(dockerSocket), false);
+  assert.equal(fs.readFileSync(path.join(item.runRoot, "docker.pid"), "utf8"), "4242\n");
+  assert.equal(fs.existsSync(path.join(item.procRoot, "7001")), true);
+  assert.equal(fs.existsSync(path.join(item.procRoot, "7002")), true);
+  assert.match(readCalls(item), /dockerd\.sh --runtime-only/);
+  assert.doesNotMatch(readCalls(item), /^kill /m);
+});
+
+fixtureTest("start refuses an unsafe internal containerd PID artifact", (item) => {
+  const containerdRoot = path.join(item.dockerRoot, "exec", "containerd");
+  const outside = path.join(item.root, "outside-containerd-pid");
+  fs.mkdirSync(containerdRoot, { recursive: true });
+  fs.writeFileSync(outside, "7002\n");
+  fs.symlinkSync(outside, path.join(containerdRoot, "containerd.pid"));
+
+  const result = runHostctl(item, "start");
+
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /runtime artifacts are not proved stale/);
+  assert.doesNotMatch(readCalls(item), /setsid|dockerd\.sh/);
+  assert.equal(fs.readFileSync(outside, "utf8"), "7002\n");
 });
 
 fixtureTest("stop refuses a pidfile that resolves to a foreign process", (item) => {
