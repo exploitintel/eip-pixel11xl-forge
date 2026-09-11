@@ -253,8 +253,31 @@ test("hostctl exposes only the bounded generic lifecycle contract", () => {
   assert.match(hostctlSource, /"\$ENV" -i PATH="\$PATH" DOCKER_HOST="\$DOCKER_HOST"/);
   assert.match(hostctlSource, /"\$KSU_BUSYBOX" timeout -k "\$WORKLOAD_HOOK_KILL_GRACE_SECONDS"/);
   assert.match(hostctlSource, /"\$WORKLOAD_PROFILE_HOOK" "\$WORKLOAD_PROFILE_PHASE" <\/dev\/null 1>&2/);
+  assert.match(hostctlSource, /OLD_IFS=\$IFS\n  IFS='\|'\n  read -r LOOP_COUNT DISK_LOOP <<EOF\n\$LOOP_PARSED\nEOF\n  IFS=\$OLD_IFS/);
+  assert.doesNotMatch(hostctlSource, /\$\{LOOP_PARSED(?:%%|#)\|\*\}/);
   assert.doesNotMatch(hostctlSource, /\beval\b|(?:sh|bash)\s+-c|companion|provider/i);
   assert.doesNotMatch(hostctlSource, /(?:curl|wget)|"\$EXPECTED_DOCKER" pull/);
+});
+
+test("loop record parsing survives Android-compatible ksh semantics", (context) => {
+  const ksh = ["/bin/ksh", "/usr/bin/ksh"].find((candidate) => fs.existsSync(candidate));
+  if (!ksh) {
+    context.skip("ksh is unavailable on this test host");
+    return;
+  }
+  const result = spawnSync(ksh, ["-c", [
+    "LOOP_PARSED='1|/dev/block/loop2'",
+    "OLD_IFS=$IFS",
+    "IFS='|'",
+    "read -r LOOP_COUNT DISK_LOOP <<EOF",
+    "$LOOP_PARSED",
+    "EOF",
+    "IFS=$OLD_IFS",
+    "printf 'count=<%s> device=<%s>\\n' \"$LOOP_COUNT\" \"$DISK_LOOP\"",
+  ].join("\n")], { encoding: "utf8" });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "count=<1> device=</dev/block/loop2>\n");
 });
 
 fixtureTest("an absent workload profile preserves the inert host lifecycle", (item) => {

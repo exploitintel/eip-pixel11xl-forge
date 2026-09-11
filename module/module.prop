@@ -1,6 +1,6 @@
 id=eip-pixel11xl-forge
 name=EIP Pixel 11 Pro XL Forge
-version=0.1.0-rc.2
-versionCode=3
+version=0.1.0-rc.3
+versionCode=4
 author=Exploit Intel
 description=Pixel 11 Pro XL Docker host installer (Wi-Fi only)

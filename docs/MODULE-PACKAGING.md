@@ -1,7 +1,7 @@
 # Installable qualification module packaging
 
 The current packaging path produces a deterministic, executable
-KernelSU-Next qualification installer for module version `0.1.0-rc.2`. It no
+KernelSU-Next qualification installer for module version `0.1.0-rc.3`. It no
 longer produces the old development-abort ZIP. It does not publish a release,
 update feed, or signature, and running the packaging workflow performs no
 phone, daemon, boot-partition, or network-policy action.
@@ -82,7 +82,7 @@ python3 tools/assemble-module.py \
   --route-policy /new/module-tools/route-policy \
   --toolchain-provenance tools/aarch64-musl-toolchain.json \
   --musl-license tools/licenses/musl-COPYRIGHT \
-  --output /new/eip-pixel11xl-forge-0.1.0-rc.2.zip
+  --output /new/eip-pixel11xl-forge-0.1.0-rc.3.zip
 ```
 
 ## Package contents
@@ -119,7 +119,7 @@ two fixed lifecycle phases under the public host lock. See
 
 The packaged uninstall hook uses the exact packaged kernel controller,
 preflight, boot-swap helper, and installer inputs to publish a standalone
-versioned recovery kit under `/data/docker/recovery/0.1.0-rc.2` before
+versioned recovery kit under `/data/docker/recovery/0.1.0-rc.3` before
 KernelSU removes the module directory. The kit's generated
 `recovery-manifest.tsv` binds its own contents, modes, and exact KernelSU-Next
 3.3.0 version code and LKM environment. It is persistent host recovery state,
@@ -166,7 +166,7 @@ Successful preflight produces exactly:
 
 ```text
 INSTALL_PREFLIGHT_VERSION=1
-module_version=0.1.0-rc.2
+module_version=0.1.0-rc.3
 build_id=CD1A.260714.001.A9
 slot_suffix=_a|_b
 boot_state=ROLE

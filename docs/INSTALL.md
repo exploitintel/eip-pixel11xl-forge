@@ -1,6 +1,6 @@
 # Pixel qualification install guide
 
-This guide is for the `0.1.0-rc.2` qualification package on one exact Pixel 11
+This guide is for the `0.1.0-rc.3` qualification package on one exact Pixel 11
 Pro XL. It is not a public release procedure. No signed public ZIP or update
 feed exists yet. The static AArch64 tools have been built twice locally with
 byte-identical outputs and executed in an isolated Linux/AArch64 environment.
@@ -83,7 +83,7 @@ Never guess the slot and never substitute a boot image from another build.
 The required files are:
 
 ```text
-eip-pixel11xl-forge-0.1.0-rc.2.zip
+eip-pixel11xl-forge-0.1.0-rc.3.zip
 docker-29.8.0.tgz
 Image-CD1A.260714.001.A9.lz4
 ```
@@ -133,7 +133,7 @@ cannot.
 ## Install through KernelSU-Next Manager
 
 1. Confirm KernelSU-Next reports version 3.3.0 and LKM mode.
-2. Select `eip-pixel11xl-forge-0.1.0-rc.2.zip` in the module installer.
+2. Select `eip-pixel11xl-forge-0.1.0-rc.3.zip` in the module installer.
 3. Read the complete installer output. Do not treat a refusal as a warning.
 4. Reboot only if the manager reports a clean module installation and no
    recovery-attention message.
@@ -277,7 +277,7 @@ and ignores the hook's exit status. The hook cannot block removal. It first
 publishes a standalone recovery kit at:
 
 ```text
-/data/docker/recovery/0.1.0-rc.2/
+/data/docker/recovery/0.1.0-rc.3/
 ```
 
 Read the uninstall output and require the exact `standalone recovery kit ready`
@@ -299,9 +299,9 @@ The manager still removes the module directory.
 The external kit remains available after manager removal:
 
 ```text
-KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.2/bin/kernelctl status
-KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.2/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_a
-KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.2/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_b
+KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.3/bin/kernelctl status
+KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.3/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_a
+KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.3/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_b
 ```
 
 Run status first and use only the restore token matching its reported active
@@ -309,7 +309,7 @@ suffix. If the host stop failed, use the exact versioned command printed by
 the hook, such as:
 
 ```text
-/data/docker/releases/0.1.0-rc.2/hostctl stop
+/data/docker/releases/0.1.0-rc.3/hostctl stop
 ```
 
 The fastboot fallback remains:

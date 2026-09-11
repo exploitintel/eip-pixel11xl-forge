@@ -870,8 +870,12 @@ resolve_disk_loops() {
       printf "%d|%s\n", count, selected
     }
   ') || { DISK_LOOP_STATE=unknown; return 1; }
-  LOOP_COUNT=${LOOP_PARSED%%|*}
-  DISK_LOOP=${LOOP_PARSED#*|}
+  OLD_IFS=$IFS
+  IFS='|'
+  read -r LOOP_COUNT DISK_LOOP <<EOF
+$LOOP_PARSED
+EOF
+  IFS=$OLD_IFS
   case "$LOOP_COUNT" in
     1) DISK_LOOP_STATE=ready; return 0 ;;
     0) DISK_LOOP_STATE=none; DISK_LOOP=; return 0 ;;

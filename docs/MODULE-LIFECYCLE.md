@@ -1,6 +1,6 @@
 # Qualification module lifecycle
 
-The tracked `module/` tree is the installable `0.1.0-rc.2` KernelSU-Next
+The tracked `module/` tree is the installable `0.1.0-rc.3` KernelSU-Next
 qualification source. It supports only Pixel 11 Pro XL `kodiak` build
 `CD1A.260714.001.A9`, KernelSU-Next 3.3.0 in LKM mode, and Wi-Fi through
 `wlan0`. Cellular and automatic transport switching are deferred.
@@ -51,7 +51,7 @@ alone may use the package-pinned HTTPS origin through a qualified
 6. One locked `stage-install` transaction persists the candidate under
    `/data/docker/kernel/CD1A.260714.001.A9/Image.lz4`, installs the clean-host
    default config when no config exists, publishes the immutable runtime under
-   `/data/docker/releases/0.1.0-rc.2`, and selects it through the relative
+   `/data/docker/releases/0.1.0-rc.3`, and selects it through the relative
    `/data/docker/bin` symlink.
 
 Hashes bind every handoff between these steps. An invalid higher-priority
@@ -120,6 +120,9 @@ lock whose recorded PID no longer exists can be recovered.
 
 Android exposes `/proc/mounts` as a symlink to `/proc/self/mounts`; hostctl
 reads that standard kernel interface when checking the Docker data mount.
+Loop-device records are split with `read` and an explicit `IFS`. Android's
+mksh treats a bare pipe in shell parameter-removal patterns as an alternation,
+so those patterns must not parse the mounted disk's loop-device identity.
 
 `status` is read-only and prints these 12 ordered fields:
 
@@ -419,7 +422,7 @@ Before inspecting the kernel or host, the hook atomically publishes or exactly
 validates this standalone, root-owned recovery kit:
 
 ```text
-/data/docker/recovery/0.1.0-rc.2/
+/data/docker/recovery/0.1.0-rc.3/
   bin/kernelctl
   bin/install-preflight
   bin/swap-boot-kernel
@@ -443,9 +446,9 @@ status preserved those source files.
 The persistent recovery commands are:
 
 ```text
-KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.2/bin/kernelctl status
-KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.2/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_a
-KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.2/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_b
+KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.3/bin/kernelctl status
+KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.3/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_a
+KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.3/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_b
 ```
 
 Use only the restore line matching the freshly reported active suffix. If the
@@ -461,7 +464,7 @@ acknowledgment, changed active link, or status 3 preserves the active link and
 prints the direct versioned stop command, for example:
 
 ```text
-/data/docker/releases/0.1.0-rc.2/hostctl stop
+/data/docker/releases/0.1.0-rc.3/hostctl stop
 ```
 
 Only a stock or predecessor kernel plus exact `result=stopped` and an unchanged
