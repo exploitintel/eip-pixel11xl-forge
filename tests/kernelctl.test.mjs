@@ -259,7 +259,7 @@ esac
 }
 
 function runWithOverrides(item, overrides, ...args) {
-  const result = spawnSync("/bin/sh", [item.executable, ...args], {
+  const result = spawnSync("bash", [item.executable, ...args], {
     encoding: "utf8",
     timeout: 30_000,
     env: {
@@ -554,7 +554,7 @@ test("root and lifecycle-lock gates refuse before any partition mutation", () =>
   const item = makeFixture();
   try {
     const before = fs.readFileSync(item.boot);
-    let result = spawnSync("/bin/sh", [item.executable, "status"], {
+    let result = spawnSync("bash", [item.executable, "status"], {
       encoding: "utf8",
       timeout: 30_000,
       env: {

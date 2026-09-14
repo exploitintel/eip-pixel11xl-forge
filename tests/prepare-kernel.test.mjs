@@ -48,7 +48,7 @@ case "$APPLET" in
   id) [ "$#" -eq 1 ] && [ "$1" = -u ] && printf '0\n' ;;
   stat)
     [ "$#" -eq 3 ] && [ "$1" = -c ] && [ "$2" = %s ] || exit 2
-    /usr/bin/stat -f '%z' "$3"
+    if [ "$(uname -s)" = Darwin ]; then /usr/bin/stat -f '%z' "$3"; else /usr/bin/stat -c '%s' "$3"; fi
     ;;
   sha256sum)
     HASH=$(/usr/bin/openssl dgst -sha256 -r "$1") || exit 1
@@ -114,7 +114,7 @@ function fixture(sourceKind = "sideload") {
 }
 
 function run(item, inputHash = sha256(fs.readFileSync(item.inputs)), ...args) {
-  const result = spawnSync("/bin/sh", [item.command, buildId, inputHash, ...args], {
+  const result = spawnSync("bash", [item.command, buildId, inputHash, ...args], {
     encoding: "utf8",
     timeout: 15_000,
     env: { ...process.env, TMPDIR: item.tmpDir },
@@ -203,7 +203,7 @@ test("prepare-kernel binds the preflight hash and detects a changing input", () 
 test("prepare-kernel refuses unsafe invocation and pre-existing private paths", () => {
   const item = fixture();
   try {
-    let result = spawnSync("/bin/sh", [item.command], {
+    let result = spawnSync("bash", [item.command], {
       encoding: "utf8", timeout: 15_000, env: { ...process.env, TMPDIR: item.tmpDir },
     });
     assert.ifError(result.error);

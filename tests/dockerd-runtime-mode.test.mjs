@@ -85,7 +85,7 @@ fi
 }
 
 function run(item, ...args) {
-  return spawnSync("/bin/sh", [item.runnablePath, ...args], {
+  return spawnSync("bash", [item.runnablePath, ...args], {
     encoding: "utf8",
     timeout: 20_000,
   });

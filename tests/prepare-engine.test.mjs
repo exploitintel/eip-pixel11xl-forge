@@ -117,8 +117,8 @@ case "$APPLET" in
   stat)
     [ "$#" -eq 3 ] && [ "$1" = -c ] || exit 2
     case "$2" in
-      %s) /usr/bin/stat -f '%z' "$3" ;;
-      %a) /usr/bin/stat -f '%Lp' "$3" ;;
+      %s) if [ "$(uname -s)" = Darwin ]; then /usr/bin/stat -f '%z' "$3"; else /usr/bin/stat -c '%s' "$3"; fi ;;
+      %a) if [ "$(uname -s)" = Darwin ]; then /usr/bin/stat -f '%Lp' "$3"; else /usr/bin/stat -c '%a' "$3"; fi ;;
       %u:%g) printf '0:0\n' ;;
       *) exit 2 ;;
     esac
@@ -341,7 +341,7 @@ function fixture({ sourceKind = "cache", mutateMembers, curl = sourceKind === "d
 }
 
 function run(item, ...args) {
-  return spawnSync("/bin/sh", [item.command, ...args], {
+  return spawnSync("bash", [item.command, ...args], {
     encoding: "utf8",
     timeout: 15_000,
     env: { ...process.env, TMPDIR: item.tmpDir },

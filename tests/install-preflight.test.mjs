@@ -222,7 +222,7 @@ exec ${shellQuote(hostSwap)} "$@"
 }
 
 function run(item, overrides = {}, ...args) {
-  const result = spawnSync("/bin/sh", [item.preflight, ...args], {
+  const result = spawnSync("bash", [item.preflight, ...args], {
     encoding: "utf8",
     // The full suite runs several shell-heavy fake-root files concurrently.
     // Keep the timeout above that expected scheduler contention while every

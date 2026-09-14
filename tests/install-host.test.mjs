@@ -53,7 +53,7 @@ case "$APPLET" in
   readlink) [ "$#" -eq 2 ] && [ "$1" = -f ] && exec /bin/realpath "$2" ;;
   stat)
     [ "$#" -eq 3 ] && [ "$1" = -c ] && [ "$2" = %s ] || exit 2
-    /usr/bin/stat -f '%z' "$3"
+    if [ "$(uname -s)" = Darwin ]; then /usr/bin/stat -f '%z' "$3"; else /usr/bin/stat -c '%s' "$3"; fi
     ;;
   sha256sum)
     HASH=$(/usr/bin/openssl dgst -sha256 -r "$1") || exit 1
@@ -158,7 +158,7 @@ printf '%s\n' result=activated active=${moduleVersion} previous=${active}
 }
 
 function run(item, ...args) {
-  const result = spawnSync("/bin/sh", [item.command, ...args], {
+  const result = spawnSync("bash", [item.command, ...args], {
     encoding: "utf8",
     timeout: 30_000,
     env: { ...process.env, TMPDIR: item.tmpDir },
