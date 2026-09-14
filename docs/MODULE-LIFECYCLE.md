@@ -1,6 +1,6 @@
 # Qualification module lifecycle
 
-The tracked `module/` tree is the installable `0.1.0-rc.3` KernelSU-Next
+The tracked `module/` tree is the installable KernelSU-Next
 qualification source. It supports only Pixel 11 Pro XL `kodiak` build
 `CD1A.260714.001.A9`, KernelSU-Next 3.3.0 in LKM mode, and Wi-Fi through
 `wlan0`. Cellular and automatic transport switching are deferred.
@@ -51,7 +51,7 @@ alone may use the package-pinned HTTPS origin through a qualified
 6. One locked `stage-install` transaction persists the candidate under
    `/data/docker/kernel/CD1A.260714.001.A9/Image.lz4`, installs the clean-host
    default config when no config exists, publishes the immutable runtime under
-   `/data/docker/releases/0.1.0-rc.3`, and selects it through the relative
+   `/data/docker/releases/0.1.0-rc.9`, and selects it through the relative
    `/data/docker/bin` symlink.
 
 Hashes bind every handoff between these steps. An invalid higher-priority
@@ -422,7 +422,7 @@ Before inspecting the kernel or host, the hook atomically publishes or exactly
 validates this standalone, root-owned recovery kit:
 
 ```text
-/data/docker/recovery/0.1.0-rc.3/
+/data/docker/recovery/0.1.0-rc.9/
   bin/kernelctl
   bin/install-preflight
   bin/swap-boot-kernel
@@ -446,9 +446,9 @@ status preserved those source files.
 The persistent recovery commands are:
 
 ```text
-KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.3/bin/kernelctl status
-KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.3/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_a
-KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.3/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_b
+KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.9/bin/kernelctl status
+KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.9/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_a
+KSU=true KSU_VER=3.3.0 KSU_VER_CODE=33214 KSU_RUNTIME_MODE=lkm /data/docker/recovery/0.1.0-rc.9/bin/kernelctl restore RESTORE:CD1A.260714.001.A9:_b
 ```
 
 Use only the restore line matching the freshly reported active suffix. If the
@@ -464,7 +464,7 @@ acknowledgment, changed active link, or status 3 preserves the active link and
 prints the direct versioned stop command, for example:
 
 ```text
-/data/docker/releases/0.1.0-rc.3/hostctl stop
+/data/docker/releases/0.1.0-rc.9/hostctl stop
 ```
 
 Only a stock or predecessor kernel plus exact `result=stopped` and an unchanged

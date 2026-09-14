@@ -742,3 +742,58 @@ test("interrupting a quiet operation reports its stage and does not claim comple
   assert.match(result.stderr, /(?:failed|failure)[^\n]*(?:source|Forge)|(?:source|Forge)[^\n]*(?:failed|failure)/i);
   expectNoCompletion(result, item.calls());
 });
+
+test("install_apk bounds stalls, retries once, and survives errexit", () => {
+  const source = fs.readFileSync(installer, "utf8");
+  const helper = source.match(/APK_INSTALL_TIMEOUT_SECONDS=\d+\n\ninstall_apk\(\) \{[\s\S]*?\n\}/);
+  assert.ok(helper, "install_apk helper must stay extractable from the installer source");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pixel-apk-watchdog-"));
+  try {
+    const fakeAdb = path.join(root, "fake-adb");
+    fs.writeFileSync(fakeAdb, `#!/bin/bash
+while [ "$#" -gt 0 ] && [ "$1" != install ]; do shift; done
+[ "\${1:-}" = install ] || exit 0
+echo "\$(cat "\$COUNT_FILE" 2>/dev/null || echo 0)" > "\$COUNT_FILE.tmp"
+n=\$(cat "\$COUNT_FILE.tmp"); echo \$((n + 1)) > "\$COUNT_FILE"
+if [ -s "\$COUNT_FILE" ] && [ "\$(head -n1 "\$MODE_FILE" 2>/dev/null)" = always ]; then sleep 300; exit 0; fi
+if [ "\$(head -n1 "\$MODE_FILE" 2>/dev/null)" = once ] && [ "\$n" -eq 0 ]; then sleep 300; exit 0; fi
+exit 0
+`);
+    fs.chmodSync(fakeAdb, 0o755);
+    const driver = path.join(root, "driver.sh");
+    fs.writeFileSync(driver, `#!/bin/bash
+set -euo pipefail
+ADB_BIN=${quote(fakeAdb)}
+SERIAL=TESTSERIAL
+${helper[0]}
+APK_INSTALL_TIMEOUT_SECONDS=2
+install_apk payload.apk
+`);
+    fs.chmodSync(driver, 0o755);
+    const run = (mode) => {
+      const countFile = path.join(root, "count");
+      const modeFile = path.join(root, "mode");
+      fs.rmSync(countFile, { force: true });
+      fs.writeFileSync(modeFile, mode);
+      const result = spawnSync("/bin/bash", [driver], {
+        encoding: "utf8",
+        env: { ...process.env, COUNT_FILE: countFile, MODE_FILE: modeFile },
+        timeout: 60_000,
+      });
+      return { result, attempts: fs.existsSync(countFile) ? Number(fs.readFileSync(countFile, "utf8")) : 0 };
+    };
+    const healthy = run("never");
+    assert.equal(healthy.result.status, 0, healthy.result.stderr);
+    assert.equal(healthy.attempts, 1);
+    const stallOnce = run("once");
+    assert.equal(stallOnce.result.status, 0, stallOnce.result.stderr);
+    assert.equal(stallOnce.attempts, 2);
+    assert.match(stallOnce.result.stderr, /stalled.*retrying once/);
+    const stalledOut = run("always");
+    assert.equal(stalledOut.result.status, 1, stalledOut.result.stderr);
+    assert.equal(stalledOut.attempts, 2);
+    assert.match(stalledOut.result.stderr, /stalled twice/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

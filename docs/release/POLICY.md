@@ -13,7 +13,9 @@ release key remain future work.
 
 - Prerelease tags use `v0.1.0-rc.N`; the first stable tag will be `v0.1.0`.
 - Module `versionCode` begins at 1 and strictly increases for every tagged
-  candidate. A value is never reused.
+  candidate. A value is never reused. Every release-prep commit updates
+  `package.json`, the `module/module.prop` `version`, and a fresh `versionCode`
+  together, so a shipped module advertises the release it belongs to.
 - Initial releases are prereleases. A second-device clean-room gate is required
   before a stable claim.
 - Hotfixes receive a new patch version and higher `versionCode`. Published
