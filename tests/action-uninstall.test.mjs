@@ -139,7 +139,7 @@ function choose(index, confirmation = null) {
 
 function runAction(item, selectedEvents = []) {
   fs.writeFileSync(item.events, selectedEvents.length === 0 ? "" : `${selectedEvents.join("\n")}\n`);
-  const result = spawnSync("/bin/sh", [item.action], {
+  const result = spawnSync("bash", [item.action], {
     encoding: "utf8",
     timeout: 30_000,
   });
@@ -487,7 +487,7 @@ esac
 }
 
 function runUninstall(item) {
-  const result = spawnSync("/bin/sh", [item.uninstall], {
+  const result = spawnSync("bash", [item.uninstall], {
     encoding: "utf8",
     timeout: 30_000,
     env: {
@@ -515,7 +515,7 @@ function assertRecoverySurvivesModuleDeletion(item) {
   assert.match(fs.readFileSync(path.join(item.recoveryDir, "recovery-manifest.tsv"), "utf8"), /^RECOVERY_KIT_VERSION=1$/m);
   assert.match(fs.readFileSync(path.join(item.recoveryDir, "recovery-manifest.tsv"), "utf8"), /^KSU\t3\.3\.0\t33214\tlkm$/m);
   fs.rmSync(item.moduleDir, { recursive: true, force: true });
-  const recoveryStatus = spawnSync("/bin/sh", [path.join(item.recoveryDir, "bin", "kernelctl"), "status"], {
+  const recoveryStatus = spawnSync("bash", [path.join(item.recoveryDir, "bin", "kernelctl"), "status"], {
     encoding: "utf8",
     timeout: 5_000,
     env: {

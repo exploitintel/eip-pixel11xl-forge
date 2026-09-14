@@ -101,9 +101,9 @@ case "$APPLET" in
   stat)
     [ "$#" -eq 3 ] && [ "$1" = -c ] || exit 1
     case "$2" in
-      %s) /usr/bin/stat -f '%z' "$3" ;;
-      %a) /usr/bin/stat -f '%Lp' "$3" ;;
-      %d:%i) /usr/bin/stat -f '%d:%i' "$3" ;;
+      %s) if [ "$(uname -s)" = Darwin ]; then /usr/bin/stat -f '%z' "$3"; else /usr/bin/stat -c '%s' "$3"; fi ;;
+      %a) if [ "$(uname -s)" = Darwin ]; then /usr/bin/stat -f '%Lp' "$3"; else /usr/bin/stat -c '%a' "$3"; fi ;;
+      %d:%i) if [ "$(uname -s)" = Darwin ]; then /usr/bin/stat -f '%d:%i' "$3"; else /usr/bin/stat -c '%d:%i' "$3"; fi ;;
       %u:%g)
         NON_ROOT_SUFFIX=$(get_state nonRootSuffix '')
         case "$3" in *"$NON_ROOT_SUFFIX") [ -n "$NON_ROOT_SUFFIX" ] && printf '2000:2000\\n' || printf '0:0\\n' ;; *) printf '0:0\\n' ;; esac
@@ -178,7 +178,7 @@ case "$APPLET" in
     if [ "$(get_state failStageMove '')" = true ] && [ "\${FROM%.staging}" != "$FROM" ]; then
       printf '%s\\n' 'injected stage move failure' >&2; exit 1
     fi
-    /bin/mv -fh "$FROM" "$TO" || exit 1
+    if [ "$(uname -s)" = Darwin ]; then /bin/mv -fh "$FROM" "$TO"; else /bin/mv -fT "$FROM" "$TO"; fi || exit 1
     CORRUPT=$(get_state corruptReleaseAfterLinkMove '')
     CORRUPT_MANIFEST=$(get_state corruptManifestAfterLinkMove '')
     case "\${FROM##*/}" in
@@ -343,7 +343,7 @@ function stageInstallArgs(prepared, assets, expectedActive) {
 }
 
 function run(item, ...args) {
-  const result = spawnSync("/bin/sh", [item.command, ...args], {
+  const result = spawnSync("bash", [item.command, ...args], {
     encoding: "utf8",
     timeout: 15_000,
   });

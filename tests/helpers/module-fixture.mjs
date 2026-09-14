@@ -131,18 +131,33 @@ rm -rf ${shellQuote(procRoot)}/"$2"
 rm -f ${shellQuote(path.join(state, "docker-info"))} ${shellQuote(path.join(runRoot, "docker.sock"))}
 `);
   writeExecutable(path.join(systemBin, "awk"), "#!/bin/sh\nexec /usr/bin/awk \"$@\"\n");
+  writeExecutable(path.join(systemBin, "tr"), "#!/bin/sh\nexec /usr/bin/tr \"$@\"\n");
   writeExecutable(path.join(systemBin, "stat"), `#!/bin/sh
 [ "$#" -eq 3 ] && [ "$1" = -c ] || exit 2
 case "$2:$3" in
   %s:${shellQuote(dockerRoot)}/*disk.img*) cat ${shellQuote(diskSize)}; exit 0 ;;
 esac
-case "$2" in
-  %s) exec /usr/bin/stat -f %z "$3" ;;
-  %u:%g) exec /usr/bin/stat -f %u:%g "$3" ;;
-  %a) exec /usr/bin/stat -f %Lp "$3" ;;
-  %d:%i:%u:%g:%a) exec /usr/bin/stat -f '%d:%i:%u:%g:%Lp' "$3" ;;
-  %d:%i:%u:%g:%a:%h:%s) exec /usr/bin/stat -f '%d:%i:%u:%g:%Lp:%l:%z' "$3" ;;
-  *) exit 2 ;;
+case "$(uname -s)" in
+  Darwin)
+    case "$2" in
+      %s) exec /usr/bin/stat -f %z "$3" ;;
+      %u:%g) exec /usr/bin/stat -f %u:%g "$3" ;;
+      %a) exec /usr/bin/stat -f %Lp "$3" ;;
+      %d:%i:%u:%g:%a) exec /usr/bin/stat -f '%d:%i:%u:%g:%Lp' "$3" ;;
+      %d:%i:%u:%g:%a:%h:%s) exec /usr/bin/stat -f '%d:%i:%u:%g:%Lp:%l:%z' "$3" ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  *)
+    case "$2" in
+      %s) exec /usr/bin/stat -c %s "$3" ;;
+      %u:%g) exec /usr/bin/stat -c %u:%g "$3" ;;
+      %a) exec /usr/bin/stat -c %a "$3" ;;
+      %d:%i:%u:%g:%a) exec /usr/bin/stat -c '%d:%i:%u:%g:%a' "$3" ;;
+      %d:%i:%u:%g:%a:%h:%s) exec /usr/bin/stat -c '%d:%i:%u:%g:%a:%h:%s' "$3" ;;
+      *) exit 2 ;;
+    esac
+    ;;
 esac
 `);
   const fixtureSha256 = [
@@ -309,7 +324,7 @@ fi
 }
 
 export function runHostctl(item, ...args) {
-  const result = spawnSync("/bin/sh", [item.hostctl, ...args], {
+  const result = spawnSync("bash", [item.hostctl, ...args], {
     encoding: "utf8",
     env: { ...process.env },
     timeout: 60_000,
@@ -321,7 +336,7 @@ export function runHostctl(item, ...args) {
 }
 
 export function runHostctlAs(item, uid, ...args) {
-  const result = spawnSync("/bin/sh", [item.hostctl, ...args], {
+  const result = spawnSync("bash", [item.hostctl, ...args], {
     encoding: "utf8",
     env: { ...process.env, FIXTURE_UID: String(uid) },
     timeout: 60_000,

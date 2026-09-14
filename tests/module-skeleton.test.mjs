@@ -55,7 +55,7 @@ shift
 case "$applet" in
   stat)
     [ "$1" = -c ] && [ "$2" = '%u:%g:%a' ] && [ "$#" -eq 3 ] || exit 2
-    mode=$(/usr/bin/stat -f '%Lp' "$3") || exit 1
+    if [ "$(uname -s)" = Darwin ]; then mode=$(/usr/bin/stat -f '%Lp' "$3"); else mode=$(/usr/bin/stat -c '%a' "$3"); fi || exit 1
     printf '0:0:%s\\n' "$mode"
     ;;
   *) exit 2 ;;
@@ -125,7 +125,7 @@ ui_print() { printf 'ui=%s\\n' "$1" >> "$TRACE"; }
 printf 'returned\\n' >> "$TRACE"
 exit 0
 `;
-  return spawnSync("/bin/sh", ["-c", runner], {
+  return spawnSync("bash", ["-c", runner], {
     encoding: "utf8",
     env: { ...process.env, ...environment, TRACE: item.trace },
     timeout: 10_000,
@@ -260,7 +260,7 @@ test("service is an immediate no-op", () => {
   assert.match(source, /^exit 0$/m);
   assert.doesNotMatch(source, /\/data\/|\bsleep\b|&/);
   const runnable = source.replace("#!/system/bin/sh", "#!/bin/sh");
-  const result = spawnSync("/bin/sh", ["-c", runnable], { encoding: "utf8", timeout: 1_000 });
+  const result = spawnSync("bash", ["-c", runnable], { encoding: "utf8", timeout: 1_000 });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, "");
 });
@@ -347,14 +347,14 @@ printf '%s\n' KERNELCTL_VERSION=1 build_id=TEST.1 slot_suffix=_b boot_state=curr
   const processTimeout = 10_000;
 
   try {
-    let result = spawnSync("/bin/sh", [boot], { encoding: "utf8", timeout: processTimeout });
+    let result = spawnSync("bash", [boot], { encoding: "utf8", timeout: processTimeout });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(fs.readFileSync(calls, "utf8"), "hostctl status\n");
 
     fs.writeFileSync(calls, "");
     fs.writeFileSync(hostStatus, statusText("on"));
     fs.writeFileSync(kernelConfig, zlib.gzipSync(capabilities.replace("CONFIG_USER_NS=y\n", "")));
-    result = spawnSync("/bin/sh", [boot], { encoding: "utf8", timeout: processTimeout });
+    result = spawnSync("bash", [boot], { encoding: "utf8", timeout: processTimeout });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(fs.readFileSync(calls, "utf8"), "hostctl status\n");
     assert.match(fs.readFileSync(path.join(dockerRoot, "hostctl.log"), "utf8"), /kernel capabilities are unavailable/);
@@ -362,13 +362,13 @@ printf '%s\n' KERNELCTL_VERSION=1 build_id=TEST.1 slot_suffix=_b boot_state=curr
     fs.writeFileSync(calls, "");
     fs.writeFileSync(kernelConfig, zlib.gzipSync(capabilities));
     fs.writeFileSync(path.join(state, "kernel-fail"), "yes\n");
-    result = spawnSync("/bin/sh", [boot], { encoding: "utf8", timeout: processTimeout });
+    result = spawnSync("bash", [boot], { encoding: "utf8", timeout: processTimeout });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(fs.readFileSync(calls, "utf8"), "hostctl status\nkernelctl status\n");
 
     fs.writeFileSync(calls, "");
     fs.rmSync(path.join(state, "kernel-fail"));
-    result = spawnSync("/bin/sh", [boot], { encoding: "utf8", timeout: processTimeout });
+    result = spawnSync("bash", [boot], { encoding: "utf8", timeout: processTimeout });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(fs.readFileSync(calls, "utf8"), "hostctl status\nkernelctl status\nhostctl start\n");
   } finally {
