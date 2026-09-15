@@ -413,6 +413,74 @@ wait_until_parked() {
   die 'Forge did not become idle within 10 minutes; the pending park was cancelled'
 }
 
+ensure_engine_archive() {
+  local engine_json engine_url engine_name engine_size engine_sha archive
+  engine_json=$SCRIPT_DIR/engine.json
+  [[ -f "$engine_json" ]] || engine_json=$SCRIPT_DIR/../tools/engine.json
+  engine_url=
+  engine_name=
+  if [[ -f "$engine_json" ]]; then
+    engine_url=$(sed -n 's/.*"url": "\([^"]*\)".*/\1/p' "$engine_json" | head -n 1)
+    engine_name=${engine_url##*/}
+  fi
+  if [[ -n "$engine_name" ]] && phone "test -s /data/local/tmp/$engine_name" >/dev/null 2>&1; then
+    return 0
+  fi
+  engine_size=
+  engine_sha=
+  if [[ -f "$engine_json" ]]; then
+    engine_size=$(sed -n 's/.*"size": \([0-9][0-9]*\).*/\1/p' "$engine_json" | head -n 1)
+    engine_sha=$(sed -n 's/.*"sha256": "\([0-9a-f]\{64\}\)".*/\1/p' "$engine_json" | head -n 1)
+  fi
+  [[ -n "$engine_url" && -n "$engine_size" && -n "$engine_sha" ]] \
+    || die 'cannot read the pinned Docker Engine identity'
+  archive=$(mktemp "${TMPDIR:-/tmp}/eip-engine.XXXXXX")
+  curl --fail --location --proto '=https' --proto-redir '=https' \
+    --output "$archive" "$engine_url" \
+    || die 'the pinned Docker Engine archive could not be downloaded'
+  [[ $(wc -c < "$archive" | tr -d ' ') == "$engine_size" ]] \
+    || die 'the pinned Docker Engine archive has the wrong size'
+  verify_file "$archive" "$engine_sha" 'Docker Engine archive'
+  push "$archive" "/data/local/tmp/$engine_name"
+  rm -f "$archive"
+}
+
+# A module refresh runs while Docker is parked. KernelSU's module update can
+# preserve previously installed file bytes (observed: a new module.prop beside
+# a stale bin/hostctl), so the payload tree is always re-staged through a
+# mode-preserving tar overlay and proven on the phone against a payload-built
+# checksum manifest. ksud runs only when the versionCode actually changed.
+refresh_module_files() {
+  local work payload_code installed_code entry
+  stage 'Updating the Pixel module' 'Check the module installer output above; Docker stays parked and existing host state is preserved.'
+  work=$(mktemp -d "${TMPDIR:-/tmp}/eip-module.XXXXXX")
+  unzip -q "$PAYLOAD/host-module.zip" -d "$work/module" \
+    || die 'the payload module archive cannot be extracted'
+  while IFS= read -r entry; do
+    [[ -n "$entry" ]] || continue
+    hash_file "$work/module/$entry"
+    printf '%s  %s\n' "$FILE_SHA256" "$entry"
+  done < <(cd "$work/module" && LC_ALL=C find . -type f | LC_ALL=C sed 's|^\./||' | LC_ALL=C sort) \
+    > "$work/manifest"
+  tar -C "$work/module" -cf "$work/files.tar" .
+  payload_code=$(sed -n 's/^versionCode=//p' "$work/module/module.prop" | tr -d '\r\n')
+  [[ "$payload_code" =~ ^[0-9]+$ ]] || die 'the payload module versionCode is invalid'
+  installed_code=$({ phone "sed -n 's/^versionCode=//p' /data/adb/modules/eip-pixel11xl-forge/module.prop" 2>/dev/null || true; } | tr -d '\r\n')
+  if [[ "$installed_code" != "$payload_code" ]]; then
+    ensure_engine_archive
+    push "$PAYLOAD/host-module.zip" /data/local/tmp/eip-pixel11xl-forge.zip
+    phone '/data/adb/ksud module install /data/local/tmp/eip-pixel11xl-forge.zip'
+    phone 'rm -f /data/local/tmp/eip-pixel11xl-forge.zip'
+  fi
+  LC_ALL=C awk '{ $1 = ""; sub(/^ /, ""); print }' "$work/manifest" > "$work/names"
+  push "$work/files.tar" /data/local/tmp/eip-module-files.tar
+  push "$work/manifest" /data/local/tmp/eip-module-manifest
+  push "$work/names" /data/local/tmp/eip-module-names
+  phone 'tar -xf /data/local/tmp/eip-module-files.tar -C /data/adb/modules/eip-pixel11xl-forge && chown -R 0:0 /data/adb/modules/eip-pixel11xl-forge && cd /data/adb/modules/eip-pixel11xl-forge && sha256sum -c /data/local/tmp/eip-module-manifest -s && find . -type f | sed "s|^\\./||" | LC_ALL=C sort | LC_ALL=C comm -23 - /data/local/tmp/eip-module-names | while IFS= read -r stale; do rm -f "$stale"; done; rc=$?; rm -f /data/local/tmp/eip-module-files.tar /data/local/tmp/eip-module-manifest /data/local/tmp/eip-module-names; exit $rc' \
+    || die 'installed module files do not match the payload'
+  rm -rf "$work"
+}
+
 configure_providers() {
   stage 'Configuring providers' 'Check the configuration error above and the supplied provider file format (KEY=VALUE); do not paste credentials into reports.'
   if [[ -n "$PROVIDER_ENV" ]]; then
@@ -484,6 +552,9 @@ if [[ "$EXISTING_INSTALL" == true ]]; then
   install_control_app
   stage 'Waiting for current Forge work to finish' 'Forge remains available until its active work is idle; close new work and wait.'
   wait_until_parked
+  if [[ -f "$PAYLOAD/host-module.zip" ]]; then
+    refresh_module_files
+  fi
   stage 'Restarting Docker for the update' 'Forge remains parked; check the Docker startup error above.'
   start_docker
   stage 'Installing the matched Forge update' 'Check the source transaction error above; existing state is retained for rollback.'
