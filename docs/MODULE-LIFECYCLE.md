@@ -13,6 +13,18 @@ Android SELinux, live Wi-Fi, active-slot kernel install and restore, reboot,
 and uninstall still require qualification on the exact phone. No public
 release or signature exists yet.
 
+## Module updates on an installed phone
+
+KernelSU's `ksud module install` over an existing module does not guarantee
+that every previously installed file is replaced: on 2026-09-15 a Pixel 11 Pro
+XL update produced a new `module.prop` (fresh versionCode) beside a stale
+`bin/hostctl`. The installer therefore treats the payload as authority: after
+any `ksud module install`, it re-stages the whole payload module tree through
+a mode-preserving tar overlay and proves the installed bytes on the phone
+against a payload-built checksum manifest, failing the update on any mismatch.
+A bare `ksud module install` without that verification must be assumed to
+leave mixed-version bytes in place.
+
 ## Manager installation
 
 KernelSU sources `customize.sh` inside the manager installer. The hook keeps

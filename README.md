@@ -130,6 +130,17 @@ for current Forge work to become idle, and updates with rollback. It preserves
 the Docker disk, Forge state, WebUI password, provider keys, and CVE data. Do
 not run `prepare-firmware.sh`, `--wipe`, or `--disk-gib` for an update.
 
+While Forge is parked, an update also refreshes the module from the bundle:
+`ksud module install` runs when the payload module versionCode changed (the
+pinned Docker Engine archive is fetched and hash-verified if the phone does not
+already hold it), and the installed module tree is always re-staged from the
+payload through a mode-preserving overlay and proven on the phone against a
+payload-built checksum manifest. The verification exists because KernelSU's
+module update can preserve previously installed file bytes - observed as a new
+`module.prop` beside a stale `bin/hostctl` on 2026-09-15 - and a silent
+mismatch would leave boot-time module code running older behavior than the
+release claims.
+
 ## What gets installed
 
 - the matched Pixel kernel and native Docker host;
