@@ -421,10 +421,12 @@ engine_tarball_block() {
 }
 
 engine_archive_name() {
-  local engine_json=$SCRIPT_DIR/engine.json url
+  local engine_json=$SCRIPT_DIR/engine.json url name
   [[ -f "$engine_json" ]] || engine_json=$SCRIPT_DIR/../tools/engine.json
-  url=$(engine_tarball_block "$engine_json" | sed -n 's/.*"url": "\([^"]*\)".*/\1/p')
-  printf '%s' "${url##*/}"
+  url=$(engine_tarball_block "$engine_json" 2>/dev/null | sed -n 's/.*"url": "\([^"]*\)".*/\1/p')
+  name=${url##*/}
+  [[ -n "$name" ]] || die 'cannot read the pinned Docker Engine identity'
+  printf '%s' "$name"
 }
 
 ensure_engine_archive() {
@@ -531,6 +533,10 @@ if [[ "$EXISTING_INSTALL" == true ]]; then
   printf 'Qualified existing installation found; preserving Docker disk, Forge state, and provider configuration.\n' >&2
 else
   require_fresh_payload
+fi
+
+if [[ "$HOST_INSTALLED" == true && "$EXISTING_INSTALL" == false && -f "$PAYLOAD/host-module.zip" ]]; then
+  refresh_module_files
 fi
 
 if [[ "$HOST_INSTALLED" == false ]]; then
