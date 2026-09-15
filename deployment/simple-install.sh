@@ -421,12 +421,10 @@ engine_tarball_block() {
 }
 
 engine_archive_name() {
-  local engine_json=$SCRIPT_DIR/engine.json url name
+  local engine_json=$SCRIPT_DIR/engine.json url
   [[ -f "$engine_json" ]] || engine_json=$SCRIPT_DIR/../tools/engine.json
   url=$(engine_tarball_block "$engine_json" 2>/dev/null | sed -n 's/.*"url": "\([^"]*\)".*/\1/p')
-  name=${url##*/}
-  [[ -n "$name" ]] || die 'cannot read the pinned Docker Engine identity'
-  printf '%s' "$name"
+  printf '%s' "${url##*/}"
 }
 
 ensure_engine_archive() {
@@ -541,7 +539,8 @@ fi
 
 if [[ "$HOST_INSTALLED" == false ]]; then
   stage 'Installing the Pixel Docker host' 'Check the module output above, package inputs, USB connection, and available phone storage.'
-  push "$PAYLOAD/docker-engine.tgz" "/data/local/tmp/$(engine_archive_name)"
+  bundled_engine_name=$(engine_archive_name) || die 'cannot read the pinned Docker Engine identity'
+  push "$PAYLOAD/docker-engine.tgz" "/data/local/tmp/$bundled_engine_name"
   push "$PAYLOAD/kernel.lz4" /data/local/tmp/Image-CD1A.260714.001.A9.lz4
   push "$PAYLOAD/host-module.zip" /data/local/tmp/eip-pixel11xl-forge.zip
   phone '/data/adb/ksud module install /data/local/tmp/eip-pixel11xl-forge.zip'
