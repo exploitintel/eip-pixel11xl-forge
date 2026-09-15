@@ -413,6 +413,20 @@ wait_until_parked() {
   die 'Forge did not become idle within 10 minutes; the pending park was cancelled'
 }
 
+# The pinned Docker Engine identity is read only from the engine.tarball
+# object; the binaries block carries its own size and sha256 keys and must
+# never satisfy these parses.
+engine_tarball_block() {
+  sed -n '/"tarball": {/,/}/p' "$1"
+}
+
+engine_archive_name() {
+  local engine_json=$SCRIPT_DIR/engine.json url
+  [[ -f "$engine_json" ]] || engine_json=$SCRIPT_DIR/../tools/engine.json
+  url=$(engine_tarball_block "$engine_json" | sed -n 's/.*"url": "\([^"]*\)".*/\1/p')
+  printf '%s' "${url##*/}"
+}
+
 ensure_engine_archive() {
   local engine_json engine_url engine_name engine_size engine_sha archive
   engine_json=$SCRIPT_DIR/engine.json
@@ -420,7 +434,7 @@ ensure_engine_archive() {
   engine_url=
   engine_name=
   if [[ -f "$engine_json" ]]; then
-    engine_url=$(sed -n 's/.*"url": "\([^"]*\)".*/\1/p' "$engine_json" | head -n 1)
+    engine_url=$(engine_tarball_block "$engine_json" | sed -n 's/.*"url": "\([^"]*\)".*/\1/p')
     engine_name=${engine_url##*/}
   fi
   if [[ -n "$engine_name" ]] && phone "test -s /data/local/tmp/$engine_name" >/dev/null 2>&1; then
@@ -429,8 +443,8 @@ ensure_engine_archive() {
   engine_size=
   engine_sha=
   if [[ -f "$engine_json" ]]; then
-    engine_size=$(sed -n 's/.*"size": \([0-9][0-9]*\).*/\1/p' "$engine_json" | head -n 1)
-    engine_sha=$(sed -n 's/.*"sha256": "\([0-9a-f]\{64\}\)".*/\1/p' "$engine_json" | head -n 1)
+    engine_size=$(engine_tarball_block "$engine_json" | sed -n 's/.*"size": \([0-9][0-9]*\).*/\1/p')
+    engine_sha=$(engine_tarball_block "$engine_json" | sed -n 's/.*"sha256": "\([0-9a-f]\{64\}\)".*/\1/p')
   fi
   [[ -n "$engine_url" && -n "$engine_size" && -n "$engine_sha" ]] \
     || die 'cannot read the pinned Docker Engine identity'
@@ -521,7 +535,7 @@ fi
 
 if [[ "$HOST_INSTALLED" == false ]]; then
   stage 'Installing the Pixel Docker host' 'Check the module output above, package inputs, USB connection, and available phone storage.'
-  push "$PAYLOAD/docker-engine.tgz" /data/local/tmp/docker-29.8.0.tgz
+  push "$PAYLOAD/docker-engine.tgz" "/data/local/tmp/$(engine_archive_name)"
   push "$PAYLOAD/kernel.lz4" /data/local/tmp/Image-CD1A.260714.001.A9.lz4
   push "$PAYLOAD/host-module.zip" /data/local/tmp/eip-pixel11xl-forge.zip
   phone '/data/adb/ksud module install /data/local/tmp/eip-pixel11xl-forge.zip'

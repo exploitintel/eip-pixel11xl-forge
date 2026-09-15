@@ -907,3 +907,10 @@ test("existing-install update fails clearly when the installed module bytes fail
   assert.ok(!item.calls().some((call) => call.tool === "adb" && call.command === "setsid sh /data/docker/bin/dockerd.sh --runtime-only </dev/null >/dev/null 2>&1 &"),
     "Docker must not restart after a failed module verification");
 });
+
+
+test("the installer never hardcodes the pinned Docker Engine archive name", () => {
+  const source = fs.readFileSync(installer, "utf8");
+  assert.doesNotMatch(source, /docker-29\.8\.0\.tgz/,
+    "the archive name must always be derived from the engine.tarball pin");
+});
