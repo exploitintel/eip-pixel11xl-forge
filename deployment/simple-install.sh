@@ -423,8 +423,9 @@ engine_tarball_block() {
 engine_archive_name() {
   local engine_json=$SCRIPT_DIR/engine.json url
   [[ -f "$engine_json" ]] || engine_json=$SCRIPT_DIR/../tools/engine.json
-  url=$(engine_tarball_block "$engine_json" | sed -n 's/.*"url": "\([^"]*\)".*/\1/p')
+  url=$(engine_tarball_block "$engine_json" 2>/dev/null | sed -n 's/.*"url": "\([^"]*\)".*/\1/p')
   printf '%s' "${url##*/}"
+  [[ -n "$url" ]]
 }
 
 ensure_engine_archive() {
@@ -490,7 +491,7 @@ refresh_module_files() {
   push "$work/files.tar" /data/local/tmp/eip-module-files.tar
   push "$work/manifest" /data/local/tmp/eip-module-manifest
   push "$work/names" /data/local/tmp/eip-module-names
-  phone 'tar -xf /data/local/tmp/eip-module-files.tar -C /data/adb/modules/eip-pixel11xl-forge && chown -R 0:0 /data/adb/modules/eip-pixel11xl-forge && cd /data/adb/modules/eip-pixel11xl-forge && /data/adb/ksu/bin/busybox sha256sum -c /data/local/tmp/eip-module-manifest -s && find . -type f | sed "s|^\\./||" | LC_ALL=C sort | LC_ALL=C comm -23 - /data/local/tmp/eip-module-names | while IFS= read -r stale; do case "$stale" in disable|remove|update|skip_mount) continue ;; esac; rm -f "$stale"; done; rc=$?; rm -f /data/local/tmp/eip-module-files.tar /data/local/tmp/eip-module-manifest /data/local/tmp/eip-module-names; exit $rc' \
+  phone 'tar -xf /data/local/tmp/eip-module-files.tar -C /data/adb/modules/eip-pixel11xl-forge && chown -R 0:0 /data/adb/modules/eip-pixel11xl-forge && cd /data/adb/modules/eip-pixel11xl-forge && /data/adb/ksu/bin/busybox sha256sum -c /data/local/tmp/eip-module-manifest -s && find . -type f | sed "s|^\\./||" | LC_ALL=C sort | LC_ALL=C comm -23 - /data/local/tmp/eip-module-names | while IFS= read -r stale; do case "$stale" in disable|remove|update|skip_mount) continue ;; esac; rm -f "$stale"; done; n_names=$(wc -l < /data/local/tmp/eip-module-names); n_files=$(find . -type f | wc -l); n_markers=0; for m in disable remove update skip_mount; do [ -f "$m" ] && n_markers=$((n_markers + 1)); done; if [ "$n_files" -ne $((n_names + n_markers)) ]; then printf 'module tree contains unexpected files beyond the payload and module-state markers\n' >&2; exit 5; fi; rm -f /data/local/tmp/eip-module-files.tar /data/local/tmp/eip-module-manifest /data/local/tmp/eip-module-names; exit 0' \
     || die 'installed module files do not match the payload'
   rm -rf "$work"
 }
@@ -533,9 +534,14 @@ else
   require_fresh_payload
 fi
 
+if [[ "$HOST_INSTALLED" == true && "$EXISTING_INSTALL" == false && -f "$PAYLOAD/host-module.zip" ]]; then
+  refresh_module_files
+fi
+
 if [[ "$HOST_INSTALLED" == false ]]; then
   stage 'Installing the Pixel Docker host' 'Check the module output above, package inputs, USB connection, and available phone storage.'
-  push "$PAYLOAD/docker-engine.tgz" "/data/local/tmp/$(engine_archive_name)"
+  bundled_engine_name=$(engine_archive_name) || die 'cannot read the pinned Docker Engine identity'
+  push "$PAYLOAD/docker-engine.tgz" "/data/local/tmp/$bundled_engine_name"
   push "$PAYLOAD/kernel.lz4" /data/local/tmp/Image-CD1A.260714.001.A9.lz4
   push "$PAYLOAD/host-module.zip" /data/local/tmp/eip-pixel11xl-forge.zip
   phone '/data/adb/ksud module install /data/local/tmp/eip-pixel11xl-forge.zip'
